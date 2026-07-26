@@ -1,0 +1,273 @@
+-- Personal Job Matcher — schema
+-- Paste this whole file into the Supabase SQL editor of the shared project
+-- (same project as the invoicing and ETF apps). Safe to re-run: everything
+-- is IF NOT EXISTS / ON CONFLICT DO NOTHING. Table names are prefixed job_
+-- so they can't collide with the invoicing or etf_ tables.
+
+-- ---------------------------------------------------------------------
+-- Profile: one row (id = 1). Everything the scorer knows about you.
+-- Edited in the app's Profile tab; read by the scan job.
+-- ---------------------------------------------------------------------
+create table if not exists job_profile (
+  id int primary key default 1 check (id = 1),
+  headline text,
+  summary text,
+  years_experience int,
+  location text,
+  -- Free-text resume. Pasted once; used verbatim as grounding for both
+  -- match scoring and cover-letter/CV generation.
+  resume_text text,
+  -- What counts as a good job. Arrays of text.
+  target_titles text[] not null default '{}',
+  target_industries text[] not null default '{}',
+  must_haves text[] not null default '{}',
+  deal_breakers text[] not null default '{}',
+  -- Geography the scan searches and the scorer accepts.
+  locations text[] not null default '{}',
+  remote_ok boolean not null default true,
+  -- The real bar is TOTAL compensation, not base. A posting listing 110k base
+  -- can clear a 128k total-comp floor once bonus, pension, benefits and equity
+  -- are counted, so base is never used as a rejection threshold anywhere.
+  min_total_comp numeric,
+  -- Free text: which components count toward that total, and at what value
+  -- (bonus target %, pension match, equity, benefits). Fed to the scorer so it
+  -- can estimate a posting's total package the way you actually would.
+  comp_components text,
+  -- Optional hard floor on base alone, for roles where a low base is a
+  -- non-starter regardless of the package. Usually left blank.
+  min_base_salary numeric,
+  -- Legacy: superseded by min_total_comp. Kept so re-running this file on an
+  -- existing install doesn't drop data; migrated across just below.
+  min_salary numeric,
+  salary_currency text not null default 'CAD',
+  -- Seniority floor — postings below this are filtered out before scoring
+  -- so Gemini quota isn't spent rejecting junior roles.
+  min_seniority text not null default 'director'
+    constraint job_profile_seniority_chk
+    check (min_seniority in ('any','senior','manager','director','vp','c_level')),
+  updated_at timestamptz not null default now()
+);
+
+-- Migrations for installs created before total-comp handling existed.
+alter table job_profile add column if not exists min_total_comp numeric;
+alter table job_profile add column if not exists comp_components text;
+alter table job_profile add column if not exists min_base_salary numeric;
+-- Carry any old base-salary floor over to the new total-comp field once, so an
+-- existing profile keeps a sensible bar instead of silently losing it.
+update job_profile
+  set min_total_comp = min_salary
+  where min_total_comp is null and min_salary is not null;
+
+-- ---------------------------------------------------------------------
+-- Sources: which feeds the scan job pulls from.
+-- kind = 'adzuna' | 'jooble' | 'jsearch' | 'greenhouse' | 'lever' | 'ashby'
+-- For ATS kinds, `token` is the company's board slug, e.g.
+--   greenhouse → boards.greenhouse.io/<token>
+--   lever      → jobs.lever.co/<token>
+--   ashby      → jobs.ashbyhq.com/<token>
+-- For aggregator kinds, `token` is unused (keys come from env).
+-- ---------------------------------------------------------------------
+create table if not exists job_sources (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in
+    ('adzuna','jooble','jsearch','greenhouse','lever','ashby')),
+  label text not null,
+  token text,
+  enabled boolean not null default true,
+  last_ok_at timestamptz,
+  last_error text,
+  created_at timestamptz not null default now(),
+  constraint job_sources_kind_token_key unique (kind, token)
+);
+
+-- ---------------------------------------------------------------------
+-- Postings: every job seen, deduped. `fingerprint` is a normalized
+-- company+title+location hash so the same role syndicated across Adzuna,
+-- Jooble and the company's own ATS collapses into one row.
+-- ---------------------------------------------------------------------
+create table if not exists job_postings (
+  id uuid primary key default gen_random_uuid(),
+  fingerprint text not null unique,
+  source text not null,
+  source_ids jsonb not null default '{}'::jsonb,
+  title text not null,
+  company text,
+  location text,
+  remote boolean not null default false,
+  url text,
+  description text,
+  salary_min numeric,
+  salary_max numeric,
+  salary_currency text,
+  -- True when the aggregator ESTIMATED the salary rather than reading it off
+  -- the posting (Adzuna does this). Estimates must not be presented as
+  -- disclosed pay.
+  salary_predicted boolean not null default false,
+  posted_at timestamptz,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  -- Set when a posting stops appearing in feeds, so the UI can grey it out
+  -- rather than deleting history you may have already applied against.
+  stale boolean not null default false
+);
+create index if not exists job_postings_posted_idx on job_postings (posted_at desc);
+create index if not exists job_postings_stale_idx on job_postings (stale);
+
+-- ---------------------------------------------------------------------
+-- Matches: the LLM's verdict on one posting against the profile.
+-- One row per posting (re-scoring updates in place).
+-- ---------------------------------------------------------------------
+create table if not exists job_matches (
+  posting_id uuid primary key references job_postings(id) on delete cascade,
+  score int not null check (score between 0 and 100),
+  tier text not null check (tier in ('exceptional','strong','possible','stretch','poor')),
+  why_fit text,
+  gaps text,
+  -- Screening risk, kept deliberately separate from `gaps` and from `score`:
+  -- being read as too senior or too expensive is a reason you never get the
+  -- call, not a reason you couldn't do the job. Conflating the two either
+  -- hides real risk or unfairly depresses good matches.
+  overqualification_risk text,
+  -- Estimated TOTAL compensation against the profile's floor, kept separate
+  -- from `score` for the same reason as overqualification_risk: most postings
+  -- disclose nothing, and guessing must never quietly depress a good match.
+  comp_assessment text,
+  -- Applicant-tracking keywords. Semicolon-separated terms the posting appears
+  -- to screen on, split by whether the profile already evidences them.
+  -- `covered` feeds the document writer the employer's own vocabulary for
+  -- things you have actually done. `missing` is NEVER inserted into a document
+  -- — it exists so you can see, across many postings, which real experience you
+  -- are describing in the wrong words.
+  ats_keywords_covered text,
+  ats_keywords_missing text,
+  pitch_angle text,
+  model text,
+  scored_at timestamptz not null default now()
+);
+alter table job_matches add column if not exists overqualification_risk text;
+alter table job_matches add column if not exists comp_assessment text;
+alter table job_matches add column if not exists ats_keywords_covered text;
+alter table job_matches add column if not exists ats_keywords_missing text;
+create index if not exists job_matches_score_idx on job_matches (score desc);
+
+-- ---------------------------------------------------------------------
+-- Applications: your pipeline, plus generated documents.
+-- ---------------------------------------------------------------------
+create table if not exists job_applications (
+  posting_id uuid primary key references job_postings(id) on delete cascade,
+  status text not null default 'interested'
+    check (status in ('interested','generating','ready','applied','interviewing','offer','rejected','passed')),
+  cover_letter text,
+  tailored_cv text,
+  notes text,
+  generated_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------
+-- Runs: log of every scan so the UI can show progress and last-run state.
+-- ---------------------------------------------------------------------
+create table if not exists job_runs (
+  id uuid primary key default gen_random_uuid(),
+  status text not null default 'running' check (status in ('running','ok','error')),
+  trigger text not null default 'schedule',
+  fetched int not null default 0,
+  new_postings int not null default 0,
+  scored int not null default 0,
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+create index if not exists job_runs_started_idx on job_runs (started_at desc);
+
+-- ---------------------------------------------------------------------
+-- Row level security: the logged-in user (any authenticated user of this
+-- project) gets full access from the app; the scan job uses the service
+-- role key, which bypasses RLS.
+-- ---------------------------------------------------------------------
+alter table job_profile enable row level security;
+alter table job_sources enable row level security;
+alter table job_postings enable row level security;
+alter table job_matches enable row level security;
+alter table job_applications enable row level security;
+alter table job_runs enable row level security;
+
+drop policy if exists "job_profile_auth" on job_profile;
+create policy "job_profile_auth" on job_profile
+  for all to authenticated using (true) with check (true);
+
+drop policy if exists "job_sources_auth" on job_sources;
+create policy "job_sources_auth" on job_sources
+  for all to authenticated using (true) with check (true);
+
+drop policy if exists "job_applications_auth" on job_applications;
+create policy "job_applications_auth" on job_applications
+  for all to authenticated using (true) with check (true);
+
+-- Postings, matches and runs are written only by the scan job (service
+-- role). The app reads them.
+drop policy if exists "job_postings_read" on job_postings;
+create policy "job_postings_read" on job_postings
+  for select to authenticated using (true);
+
+drop policy if exists "job_matches_read" on job_matches;
+create policy "job_matches_read" on job_matches
+  for select to authenticated using (true);
+
+drop policy if exists "job_runs_read" on job_runs;
+create policy "job_runs_read" on job_runs
+  for select to authenticated using (true);
+
+-- ---------------------------------------------------------------------
+-- Convenience view: ranked jobs with their match verdict and pipeline
+-- status in one shot, so the dashboard is a single query.
+-- ---------------------------------------------------------------------
+create or replace view job_ranked as
+select
+  p.id,
+  p.title,
+  p.company,
+  p.location,
+  p.remote,
+  p.url,
+  p.description,
+  p.salary_min,
+  p.salary_max,
+  p.salary_currency,
+  p.salary_predicted,
+  p.source,
+  p.posted_at,
+  p.first_seen_at,
+  p.stale,
+  m.score,
+  m.tier,
+  m.why_fit,
+  m.gaps,
+  m.overqualification_risk,
+  m.comp_assessment,
+  m.ats_keywords_covered,
+  m.ats_keywords_missing,
+  m.pitch_angle,
+  m.scored_at,
+  a.status as app_status,
+  (a.cover_letter is not null) as has_cover_letter
+from job_postings p
+left join job_matches m on m.posting_id = p.id
+left join job_applications a on a.posting_id = p.id;
+
+-- Views run with the definer's rights; the underlying tables are still
+-- RLS-protected, and anon has no grant here.
+revoke all on job_ranked from anon;
+grant select on job_ranked to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Seed: profile row + a starter set of aggregator sources.
+-- ATS company boards are added from the app's Sources tab.
+-- ---------------------------------------------------------------------
+insert into job_profile (id) values (1) on conflict (id) do nothing;
+
+insert into job_sources (kind, label, token) values
+  ('adzuna', 'Adzuna (Canada)', 'ca'),
+  ('adzuna', 'Adzuna (United States)', 'us'),
+  ('jooble', 'Jooble', null)
+on conflict (kind, token) do nothing;

@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f0f9ff;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- White border for dark mode visibility -->
+  <rect width="512" height="512" rx="80" fill="white"/>
+  <rect x="8" y="8" width="496" height="496" rx="72" fill="url(#bgGradient)"/>
+  
+  <!-- AI Circuit Pattern Background -->
+  <g opacity="0.12">
+    <circle cx="100" cy="100" r="3" fill="white"/>
+    <circle cx="412" cy="412" r="3" fill="white"/>
+    <circle cx="150" cy="380" r="2" fill="white"/>
+    <circle cx="380" cy="150" r="2" fill="white"/>
+    <line x1="100" y1="100" x2="150" y2="150" stroke="white" stroke-width="2"/>
+    <line x1="380" y1="150" x2="412" y2="200" stroke="white" stroke-width="2"/>
+    <line x1="150" y1="380" x2="200" y2="412" stroke="white" stroke-width="2"/>
+  </g>
+  
+  <!-- Main RS Letters with Glow -->
+  <g transform="translate(256, 256)" filter="url(#glow)">
+    <!-- R -->
+    <text x="-85" y="85" 
+          font-family="'Inter', 'Arial', sans-serif" 
+          font-size="280" 
+          font-weight="800" 
+          fill="url(#textGradient)" 
+          text-anchor="middle">R</text>
+    
+    <!-- S -->
+    <text x="85" y="85" 
+          font-family="'Inter', 'Arial', sans-serif" 
+          font-size="280" 
+          font-weight="800" 
+          fill="url(#textGradient)" 
+          text-anchor="middle">S</text>
+  </g>
+  
+  <!-- AI Accent - Brighter for visibility -->
+  <g opacity="0.95">
+    <circle cx="256" cy="90" r="8" fill="#a78bfa"/>
+    <circle cx="256" cy="422" r="8" fill="#a78bfa"/>
+    <line x1="256" y1="98" x2="256" y2="140" stroke="#a78bfa" stroke-width="3" opacity="0.7"/>
+    <line x1="256" y1="372" x2="256" y2="414" stroke="#a78bfa" stroke-width="3" opacity="0.7"/>
+  </g>
+</svg>

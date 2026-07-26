@@ -1,0 +1,50 @@
+// On-demand scan: fires the GitHub Actions workflow that runs the scan
+// script. A full scan hits several APIs and then makes dozens of LLM calls, so
+// it runs where it has minutes to spare (Actions) rather than inside a Supabase
+// edge function's request timeout.
+//
+// Same browser-PAT pattern as the blog preview page: a fine-grained token with
+// only the `workflow` scope, kept in localStorage, never committed.
+
+const REPO = import.meta.env.VITE_GITHUB_REPO || 'imetrobert/jobs'
+const WORKFLOW = 'job-scan.yml'
+const REF = import.meta.env.VITE_GITHUB_REF || 'main'
+const TOKEN_KEY = 'jobs.githubToken'
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || ''
+}
+
+export function setToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token.trim())
+  else localStorage.removeItem(TOKEN_KEY)
+}
+
+export async function triggerScan() {
+  const token = getToken()
+  if (!token) throw new Error('No GitHub token saved — add one below to enable Refresh.')
+
+  const res = await fetch(
+    `https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ref: REF, inputs: { trigger: 'manual' } }),
+    }
+  )
+
+  if (res.status === 204) return true
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('GitHub rejected the token. It needs the "workflow" scope and access to this repo.')
+  }
+  if (res.status === 404) {
+    throw new Error(`Workflow not found. Check that ${WORKFLOW} exists on ${REF} in ${REPO}.`)
+  }
+  const body = await res.text()
+  throw new Error(`GitHub returned ${res.status}: ${body.slice(0, 200)}`)
+}
