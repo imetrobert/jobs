@@ -1,0 +1,77 @@
+name: Job scan
+
+# Monthly on the 1st, plus on demand — either from the Actions tab or from the
+# "Refresh now" button in the app, which dispatches this workflow.
+on:
+  schedule:
+    - cron: '0 11 1 * *'
+  workflow_dispatch:
+    inputs:
+      trigger:
+        description: 'Recorded in the run log (schedule | manual)'
+        required: false
+        default: 'manual'
+        type: string
+      max_scores:
+        description: 'Cap on how many postings get scored this run'
+        required: false
+        default: '120'
+        type: string
+      batch_size:
+        description: 'Postings assessed per LLM call (higher = fewer requests)'
+        required: false
+        default: '5'
+        type: string
+
+permissions:
+  contents: read
+
+# The scan writes postings and matches; two overlapping runs would duplicate
+# LLM spend on the same rows. Queue instead of racing.
+concurrency:
+  group: job-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run scan
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Gemini is the required scorer. ANTHROPIC_API_KEY is an optional
+          # upgrade — leave the secret unset and the scan runs entirely on the
+          # Gemini free tier, with no paid Anthropic account involved.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          JOOBLE_API_KEY: ${{ secrets.JOOBLE_API_KEY }}
+          JSEARCH_RAPIDAPI_KEY: ${{ secrets.JSEARCH_RAPIDAPI_KEY }}
+          SCAN_TRIGGER: ${{ inputs.trigger || 'schedule' }}
+          MAX_SCORES_PER_RUN: ${{ inputs.max_scores || '120' }}
+          SCORE_BATCH_SIZE: ${{ inputs.batch_size || '5' }}
+        run: node scripts/run-job-scan.js
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Job scan"
+            echo ""
+            echo "Trigger: \`${{ inputs.trigger || 'schedule' }}\`"
+            echo ""
+            echo "Results: https://jobs.imetrobert.com"
+          } >> "$GITHUB_STEP_SUMMARY"
