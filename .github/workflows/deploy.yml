@@ -1,9 +1,21 @@
 name: Deploy to GitHub Pages
 
+# WHY "workflow_run" IS HERE, NOT JUST "push"
+# Sync app code commits with the default GITHUB_TOKEN, and GitHub
+# deliberately does not let a GITHUB_TOKEN push trigger other workflows —
+# it's an anti-recursion safeguard, not a bug. That means the `push` trigger
+# below never actually fired after a sync; only a manual run of this
+# workflow did. workflow_run doesn't have that restriction, so this fires
+# automatically whenever Sync app code finishes, whether or not it changed
+# anything (a no-op rebuild is cheap; a stale site that silently never
+# redeploys is the worse failure mode).
 on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_run:
+    workflows: ['Sync app code']
+    types: [completed]
 
 permissions:
   contents: read
@@ -17,6 +29,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Only skip on an explicit sync FAILURE — a successful sync (changed or
+    # not) and both direct triggers (push, manual dispatch) should proceed.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
