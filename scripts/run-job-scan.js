@@ -92,6 +92,7 @@ async function main() {
 
   const stats = { fetched: 0, new_postings: 0, scored: 0 }
   let quotaStopped = false
+  let scoringError = null
 
   try {
     const { data: profile, error: profErr } = await db
@@ -294,8 +295,11 @@ async function main() {
         }
         console.log(`  — batch ${n + 1}/${batches.length} done (${stats.scored} scored so far)`)
       } catch (err) {
+        // Keep the first failure: it is almost always the real cause, and the
+        // run summary reports it so a scan that scored nothing can't look
+        // like a success.
+        if (!scoringError) scoringError = err.message
         if (err instanceof QuotaExhaustedError) {
-          // Not a failure: stop cleanly, keep what we have, resume next run.
           console.warn(`\n${err.message}`)
           quotaStopped = true
           break
@@ -304,6 +308,15 @@ async function main() {
         // and are retried next time.
         console.warn(`  batch ${n + 1} failed: ${err.message}`)
       }
+    }
+
+    // A run that tried to score and scored nothing is a failed run, however
+    // gracefully it stopped. Reporting "ok" here hid a broken API key across
+    // three consecutive scans.
+    if (toScore.length > 0 && stats.scored === 0) {
+      throw new Error(
+        `Scoring failed for all ${toScore.length} postings. First error: ${scoringError || 'unknown'}`
+      )
     }
 
     // ---- age out postings that stopped appearing ----

@@ -3,8 +3,13 @@
 // it runs where it has minutes to spare (Actions) rather than inside a Supabase
 // edge function's request timeout.
 //
-// Same browser-PAT pattern as the blog preview page: a fine-grained token with
-// only the `workflow` scope, kept in localStorage, never committed.
+// Same browser-PAT pattern as the blog preview page: a token kept in
+// localStorage, never committed.
+//
+// Scope note, because it is counter-intuitive: TRIGGERING a workflow needs
+// `repo` on a classic token, or `Actions: write` on a fine-grained one. The
+// `workflow` scope sounds right but governs EDITING workflow files, and a
+// token holding only that is rejected here.
 
 const REPO = import.meta.env.VITE_GITHUB_REPO || 'imetrobert/jobs'
 const WORKFLOW = 'job-scan.yml'
@@ -40,7 +45,11 @@ export async function triggerScan() {
 
   if (res.status === 204) return true
   if (res.status === 401 || res.status === 403) {
-    throw new Error('GitHub rejected the token. It needs the "workflow" scope and access to this repo.')
+    throw new Error(
+      'GitHub rejected the token. Triggering a workflow needs the "repo" scope on a classic token, ' +
+        'or "Actions: read and write" on a fine-grained one. The "workflow" scope alone is not enough — ' +
+        'that one only allows editing workflow files.'
+    )
   }
   if (res.status === 404) {
     throw new Error(`Workflow not found. Check that ${WORKFLOW} exists on ${REF} in ${REPO}.`)

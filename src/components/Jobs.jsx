@@ -105,10 +105,13 @@ export default function Jobs({ session }) {
           <h3>GitHub token</h3>
           <p className="muted">
             The Refresh button starts the scan workflow on your behalf. Create a token at{' '}
-            <a href="https://github.com/settings/tokens/new?scopes=workflow&description=Job%20Match%20Refresh" target="_blank" rel="noreferrer">
+            <a href="https://github.com/settings/tokens/new?scopes=repo&description=Job%20Match%20Refresh" target="_blank" rel="noreferrer">
               github.com/settings/tokens/new
             </a>{' '}
-            with the <code>workflow</code> scope. It stays in this browser only.
+            with the <code>repo</code> scope — that link pre-selects it. It stays in this
+            browser only. (A fine-grained token works too, with{' '}
+            <code>Actions: read and write</code> on this repo. Note that <code>workflow</code>{' '}
+            is <em>not</em> the right scope: it governs editing workflow files, not running them.)
           </p>
           <div className="row">
             <input

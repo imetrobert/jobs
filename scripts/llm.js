@@ -31,7 +31,7 @@ const GEMINI_MODELS = process.env.GEMINI_MODEL
 // check AI Studio for yours, and raise this only on a paid tier.
 const GEMINI_RPM = Number(process.env.GEMINI_RPM || 8)
 const MIN_GAP_MS = Math.ceil(60_000 / Math.max(1, GEMINI_RPM))
-const MAX_RETRIES = 4
+const MAX_RETRIES = 2
 
 // Thrown when the daily quota is gone. The scan catches this and stops
 // cleanly with partial results saved, rather than burning the remaining
@@ -88,11 +88,13 @@ async function geminiOnce(model, body) {
   })
 
   if (res.status === 429) {
-    const detail = await res.text()
-    const err = new Error(`rate limited on ${model}`)
-    // Google reports both per-minute and per-day exhaustion as 429. Only the
-    // daily one is worth giving up on.
-    err.daily = /per\s*day|PerDay|daily/i.test(detail)
+    // Carry Google's own wording through. A 429 can mean a per-minute limit
+    // that clears in seconds or a per-day one that doesn't, and its body
+    // frequently lists BOTH metrics — so this is never classified here, only
+    // reported. Retrying and failing is cheap; giving up on a recoverable
+    // limit costs a whole scan.
+    const detail = (await res.text()).replace(/\s+/g, ' ').slice(0, 300)
+    const err = new Error(`429 from ${model}: ${detail}`)
     err.retryable = true
     throw err
   }
@@ -119,18 +121,25 @@ async function geminiCall(body) {
         return await paced(() => geminiOnce(model, body))
       } catch (err) {
         lastErr = err
-        if (err.daily) break // this model's day is done — try the next model
         if (!err.retryable) break // real error, not worth retrying
-        // Exponential backoff: 4s, 8s, 16s, 32s.
+        if (attempt === MAX_RETRIES) break // exhausted here; fall to next model
+        // Exponential backoff: 4s then 8s. Deliberately short — a per-minute
+        // limit clears inside that, and anything that doesn't is better
+        // reported than waited out.
         const backoff = 4000 * 2 ** attempt
-        console.warn(`    ${err.message} — retrying in ${backoff / 1000}s`)
+        console.warn(`    ${err.message}`)
+        console.warn(`    retrying ${model} in ${backoff / 1000}s`)
         await sleep(backoff)
       }
     }
   }
-  if (lastErr?.daily) {
+  // Every model refused after retries. Whether that's a per-day wall or
+  // something else, the run can't continue — but Google's own message goes
+  // with it, so the cause is visible in the log and in job_runs.error rather
+  // than being guessed at.
+  if (lastErr?.retryable) {
     throw new QuotaExhaustedError(
-      'Gemini daily quota exhausted on every model in the chain. Partial results were saved; the rest will be scored on the next run.'
+      `Gemini rejected every model after retries. Anything already scored is saved. Last response — ${lastErr.message}`
     )
   }
   throw lastErr || new Error('All Gemini models failed')

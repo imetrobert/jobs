@@ -318,8 +318,11 @@ outperform any aggregator.
 The in-app **Refresh now** button starts the scan workflow on your behalf, so it
 needs a token — the same pattern as your blog preview page.
 
-Create one at [github.com/settings/tokens/new](https://github.com/settings/tokens/new?scopes=workflow&description=Job%20Match%20Refresh)
-with the **`workflow`** scope, then paste it into the "Set up Refresh" box in the
+Create one at [github.com/settings/tokens/new](https://github.com/settings/tokens/new?scopes=repo&description=Job%20Match%20Refresh)
+with the **`repo`** scope (a fine-grained token works too, with **Actions: read and
+write** on this repo). Note that **`workflow` is the wrong scope** despite the name —
+it governs editing workflow files, not running them. Then paste the token into the
+"Set up Refresh" box in the
 app. It's stored in that browser's localStorage only — once per device, never
 committed.
 
