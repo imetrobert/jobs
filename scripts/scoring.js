@@ -61,7 +61,7 @@ const ASSESSMENT = {
     },
     location_fit: {
       type: 'string',
-      enum: ['remote_montreal', 'onsite_close', 'onsite_far', 'not_montreal'],
+      enum: ['remote_montreal', 'onsite_close', 'onsite_far', 'remote_unclear', 'not_montreal'],
       description:
         'Whether and how this candidate could physically work this role from Montreal. See LOCATION FIT in the system prompt for the exact categories.',
     },
@@ -262,12 +262,15 @@ LOCATION FIT
 
 The candidate lives in Côte Saint-Luc, on the west-central part of the Island of Montreal. This is a hard requirement, separate from the score: classify "location_fit" as exactly one of:
 
-- "remote_montreal" — genuinely fully remote, AND a candidate based in Montreal/Quebec/Canada is eligible. Not this if remote is restricted to another country, another province with no exceptions, or a specific non-Montreal city/region.
+- "remote_montreal" — genuinely fully remote, AND you are CONFIDENT a candidate based in Montreal/Quebec/Canada is eligible. The employer's own office location is irrelevant — a US, European, or fully distributed company is fine as long as a Canadian remote employee is actually permitted. Confidence can come from an explicit statement ("remote — Canada", "remote — North America", "we hire from anywhere") or from the posting simply having no geography-specific hiring language anywhere — no named country, no state list, no domestic-only legal boilerplate. Reserve this tier for a genuine yes, not a shrug.
 - "onsite_close" — requires physical presence (hybrid or fully on-site) at a location within roughly 10km of Côte Saint-Luc. Treat Côte Saint-Luc itself, NDG, Hampstead, Montreal West, Snowdon, the Town of Mount Royal, Westmount, Saint-Laurent, Lachine, and the West Island suburbs (Dorval, Pointe-Claire, Kirkland, Dollard-des-Ormeaux, Beaconsfield) as close.
 - "onsite_far" — requires physical presence somewhere in the greater Montreal area, but more than roughly 10km from Côte Saint-Luc: downtown Montreal, Old Montreal, the Plateau, Griffintown, Verdun, Rosemont, Hochelaga, and off-island suburbs (Laval, Longueuil, Brossard, Terrebonne, Vaudreuil-Dorion, Repentigny) all count as far, even though they are still commutable.
-- "not_montreal" — no way to do this job from Montreal at all: not remote-eligible, and the office is outside the greater Montreal area entirely.
+- "remote_unclear" — genuinely remote, but you cannot confidently place it in either "remote_montreal" or "not_montreal". Use this for the middle ground: signals exist but don't add up to a clear yes or a clear no, or the posting is only ambiguously US-leaning (mentions one US city as "location" without saying whether that's a hard requirement or just where the team happens to sit, say). This tier exists so you never have to guess a binary answer you don't actually have evidence for.
+- "not_montreal" — no way to do this job from Montreal at all. This is the confident-no case: either the office is outside the greater Montreal area with no remote option, or the remote posting is confidently restricted elsewhere. For the latter, watch for tells even when the posting never says "US only" outright: "must be authorized to work in the United States without sponsorship", a requirement to reside in one or more named US states, pay stated only as a US salary band with US-specific benefits (401(k), US federal holidays), EEO/OFCCP/E-Verify boilerplate (US-specific legal language), or references to needing a US Social Security Number or I-9. Any one of those, unless the posting separately and explicitly welcomes Canadian/international candidates anyway, is a confident no — use "not_montreal", not "remote_unclear" (this posting does offer a clear answer, it's just "no"), and not the discipline of guessing "remote_montreal" out of charity.
 
-If the posting doesn't state its location clearly, judge from context (company HQ, named office city). When genuinely unresolvable, prefer "onsite_far" over guessing "close" — the cost of ranking a role slightly too low is much smaller than the cost of ranking an out-of-reach one too high. This field never affects "score" — a role can score 90 for fit and still be "not_montreal"; the two are independent judgments and both must be honest.
+So for any remote posting, ask two questions in order: (1) is there a clear reason to say no (a real restriction, explicit or implied)? If yes → "not_montreal". (2) If not, is there enough — explicit welcome, or genuine silence with zero geography language — to say yes with real confidence? If yes → "remote_montreal". If neither question resolves cleanly, that is exactly what "remote_unclear" is for: don't force it into whichever of the other two feels safer.
+
+If a non-remote posting's location isn't stated clearly, judge from context (company HQ, named office city) and prefer "onsite_far" over guessing "close" if it's genuinely unresolvable — the cost of ranking a role slightly too low is much smaller than the cost of ranking an out-of-reach one too high. This field never affects "score" — a role can score 90 for fit and still be "not_montreal" or "remote_unclear"; these are independent judgments and all of them must be honest.
 
 APPLICANT-TRACKING KEYWORDS
 
@@ -301,7 +304,7 @@ function cleanTerms(value) {
   return terms.length ? terms.join('; ') : null
 }
 
-const LOCATION_FITS = ['remote_montreal', 'onsite_close', 'onsite_far', 'not_montreal']
+const LOCATION_FITS = ['remote_montreal', 'onsite_close', 'onsite_far', 'remote_unclear', 'not_montreal']
 
 function parseAssessment(raw, job) {
   let score = clampScore(raw?.score)

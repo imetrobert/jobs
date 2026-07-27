@@ -58,6 +58,7 @@ function locationLabel(fit) {
     case 'remote_montreal': return 'Remote · Montreal OK'
     case 'onsite_close': return 'Close to Côte St-Luc'
     case 'onsite_far': return 'Montreal · farther out'
+    case 'remote_unclear': return 'Remote · Canada unclear'
     default: return null
   }
 }
@@ -70,6 +71,10 @@ export default function JobCard({ job, onChanged }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [docs, setDocs] = useState(null)
+  // Collapsed by default — the full letter + CV text is long enough that
+  // auto-expanding it (whether just generated or loaded from an earlier
+  // visit) pushes the rest of the page out of view.
+  const [docsOpen, setDocsOpen] = useState(false)
   const [err, setErr] = useState('')
 
   async function setStatus(status) {
@@ -207,9 +212,34 @@ export default function JobCard({ job, onChanged }) {
 
           <div className="job-actions">
             {job.url && (
-              <a className="btn ghost" href={job.url} target="_blank" rel="noreferrer">
-                View posting ↗
-              </a>
+              // Adzuna's US-region listing pages wall themselves off from
+              // visitors they detect as browsing from outside the US
+              // ("Sorry, this job is not available in your region") — a
+              // restriction on Adzuna's own redirect page, unrelated to
+              // whether the employer would actually hire remotely from
+              // Canada. Every posting sourced this way is tagged
+              // adzuna:us, so it's known in advance rather than discovered
+              // by clicking through to a dead end.
+              job.source === 'adzuna:us' ? (
+                <a
+                  className="btn ghost"
+                  href={`https://www.google.com/search?q=${encodeURIComponent(
+                    // Exclude adzuna.com itself — it's often the top result
+                    // for its own listing, which just bounces back into the
+                    // same regional block this link exists to route around.
+                    `${job.company || ''} ${job.title} -site:adzuna.com`.trim()
+                  )}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Adzuna's US listing pages often block visitors browsing from outside the US, regardless of the job itself — this searches for the posting elsewhere instead"
+                >
+                  Find posting ↗
+                </a>
+              ) : (
+                <a className="btn ghost" href={job.url} target="_blank" rel="noreferrer">
+                  View posting ↗
+                </a>
+              )
             )}
             <button className="btn" onClick={generate} disabled={busy}>
               {busy ? 'Drafting…' : docs ? 'Regenerate' : 'Draft cover letter + CV'}
@@ -228,57 +258,65 @@ export default function JobCard({ job, onChanged }) {
 
           {docs && (
             <div className="docs">
-              <section>
-                <div className="doc-head">
-                  <h4>Cover letter</h4>
-                  <button
-                    className="btn ghost sm"
-                    onClick={() =>
-                      download(`cover-letter-${slug(job.company)}-${slug(job.title)}.txt`, docs.cover_letter)
-                    }
-                  >
-                    Download
-                  </button>
-                </div>
-                <pre className="doc">{docs.cover_letter}</pre>
-              </section>
-              {docs.tailored_cv && (
-                <section>
-                  <div className="doc-head">
-                    <h4>Tailored CV</h4>
-                    <span className="row">
+              <button className="doc-head docs-toggle" onClick={() => setDocsOpen(v => !v)}>
+                <h4>Cover letter &amp; CV {docsOpen ? '▾' : '▸'}</h4>
+                <span className="muted sm">{docsOpen ? 'Hide' : 'Ready — tap to view'}</span>
+              </button>
+              {docsOpen && (
+                <>
+                  <section>
+                    <div className="doc-head">
+                      <h4>Cover letter</h4>
                       <button
                         className="btn ghost sm"
                         onClick={() =>
-                          download(
-                            `cv-${slug(job.company)}-${slug(job.title)}.txt`,
-                            toPlainText(docs.tailored_cv)
-                          )
+                          download(`cover-letter-${slug(job.company)}-${slug(job.title)}.txt`, docs.cover_letter)
                         }
-                        title="Plain text, no formatting — safest for application portals and resume parsers"
                       >
-                        Download .txt (ATS-safe)
+                        Download
                       </button>
-                      <button
-                        className="btn ghost sm"
-                        onClick={() =>
-                          download(`cv-${slug(job.company)}-${slug(job.title)}.md`, docs.tailored_cv)
-                        }
-                        title="Markdown source, for reformatting into a designed version"
-                      >
-                        .md
-                      </button>
-                    </span>
-                  </div>
-                  <pre className="doc">{docs.tailored_cv}</pre>
-                </section>
+                    </div>
+                    <pre className="doc">{docs.cover_letter}</pre>
+                  </section>
+                  {docs.tailored_cv && (
+                    <section>
+                      <div className="doc-head">
+                        <h4>Tailored CV</h4>
+                        <span className="row">
+                          <button
+                            className="btn ghost sm"
+                            onClick={() =>
+                              download(
+                                `cv-${slug(job.company)}-${slug(job.title)}.txt`,
+                                toPlainText(docs.tailored_cv)
+                              )
+                            }
+                            title="Plain text, no formatting — safest for application portals and resume parsers"
+                          >
+                            Download .txt (ATS-safe)
+                          </button>
+                          <button
+                            className="btn ghost sm"
+                            onClick={() =>
+                              download(`cv-${slug(job.company)}-${slug(job.title)}.md`, docs.tailored_cv)
+                            }
+                            title="Markdown source, for reformatting into a designed version"
+                          >
+                            .md
+                          </button>
+                        </span>
+                      </div>
+                      <pre className="doc">{docs.tailored_cv}</pre>
+                    </section>
+                  )}
+                  <p className="muted sm">
+                    Drafts, not final copy — read them before sending. Every factual claim should be
+                    one you can stand behind in an interview. The <code>.txt</code> version is the
+                    one to upload to a portal: no tables, columns or graphics, which are the usual
+                    reason a real CV parses as near-empty.
+                  </p>
+                </>
               )}
-              <p className="muted sm">
-                Drafts, not final copy — read them before sending. Every factual claim should be
-                one you can stand behind in an interview. The <code>.txt</code> version is the
-                one to upload to a portal: no tables, columns or graphics, which are the usual
-                reason a real CV parses as near-empty.
-              </p>
             </div>
           )}
         </div>

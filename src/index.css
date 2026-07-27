@@ -262,6 +262,7 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .loc-remote_montreal { background: rgba(63, 185, 80, .18); color: var(--good); }
 .loc-onsite_close { background: rgba(79, 156, 249, .18); color: var(--accent); }
 .loc-onsite_far { background: rgba(210, 153, 34, .16); color: var(--warn); }
+.loc-remote_unclear { background: rgba(139, 148, 158, .16); color: var(--muted); }
 
 .job-body { padding: 4px 16px 18px; border-top: 1px solid var(--line); }
 .job-body section { margin: 14px 0; }
@@ -317,6 +318,17 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 
 .docs { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 6px; }
 .doc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.docs-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 6px 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.docs-toggle h4 { margin: 0; }
 .doc {
   background: var(--bg);
   border: 1px solid var(--line);
