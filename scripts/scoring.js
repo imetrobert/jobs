@@ -70,6 +70,11 @@ const ASSESSMENT = {
       description:
         'ONLY when location_fit is "not_montreal" AND the candidate is an exceptional or strong enough match that proactively raising a remote/hybrid ask would be reasonable: one or two sentences on specifically why. Empty string in every other case, including the (much more common) decent-but-unremarkable "not_montreal" fit.',
     },
+    application_deadline: {
+      type: 'string',
+      description:
+        'ONLY when the posting ITSELF explicitly states a closing date or "apply by" date — format as YYYY-MM-DD. Empty string otherwise. Never infer, estimate, or compute one from the posted date; most postings state none, and that is the expected, correct answer.',
+    },
   },
   required: [
     'ref',
@@ -84,6 +89,7 @@ const ASSESSMENT = {
     'pitch_angle',
     'location_fit',
     'negotiation_note',
+    'application_deadline',
   ],
   additionalProperties: false,
 }
@@ -165,6 +171,16 @@ function clampScore(n) {
   const v = Math.round(Number(n))
   if (!Number.isFinite(v)) return 0
   return Math.max(0, Math.min(100, v))
+}
+
+// Strict YYYY-MM-DD only — Gemini has no schema enforcement on the FORMAT
+// of a string field (only that the field is present), so this guards
+// against a conversational date ("March 15th") or a hallucinated one
+// reaching the database as if it were reliable structured data.
+function parseDeadline(raw) {
+  const s = String(raw || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null
+  return Number.isNaN(Date.parse(s)) ? null : s
 }
 
 function profileBlock(p) {
@@ -366,6 +382,7 @@ function parseAssessment(raw, job) {
     location_fit: locationFit,
     negotiation_note:
       locationFit === 'not_montreal' ? String(raw?.negotiation_note || '').trim() || null : null,
+    application_deadline: parseDeadline(raw?.application_deadline),
   }
 }
 

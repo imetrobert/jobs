@@ -158,6 +158,11 @@ create table if not exists job_matches (
   -- hybrid arrangement is a reasonable move despite the posting not
   -- offering one. Empty for the (much more common) ordinary not_montreal row.
   negotiation_note text,
+  -- Only set when the posting's OWN text states a closing/apply-by date.
+  -- The scan marks the posting stale once this date passes — a stronger,
+  -- immediate signal than the general "stopped appearing in any feed" one,
+  -- for the minority of postings that state a deadline at all.
+  application_deadline date,
   model text,
   scored_at timestamptz not null default now()
 );
@@ -167,6 +172,7 @@ alter table job_matches add column if not exists ats_keywords_covered text;
 alter table job_matches add column if not exists ats_keywords_missing text;
 alter table job_matches add column if not exists location_fit text;
 alter table job_matches add column if not exists negotiation_note text;
+alter table job_matches add column if not exists application_deadline date;
 create index if not exists job_matches_score_idx on job_matches (score desc);
 
 -- ---------------------------------------------------------------------
@@ -295,7 +301,8 @@ select
     when 'not_montreal' then 5
     else 6
   end as location_priority,
-  m.negotiation_note
+  m.negotiation_note,
+  m.application_deadline
 from job_postings p
 left join job_matches m on m.posting_id = p.id
 left join job_applications a on a.posting_id = p.id;

@@ -124,6 +124,19 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 }
 .btn:hover:not(:disabled) { filter: brightness(1.1); }
 .btn:disabled { opacity: .5; cursor: default; }
+.btn-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin-right: 7px;
+  vertical-align: -2px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: .75;
+  animation: spin .8s linear infinite;
+}
+.done-check { color: var(--good); font-weight: 600; }
 .btn.ghost {
   background: transparent;
   color: var(--text);
@@ -224,7 +237,7 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .job.open { border-color: var(--accent-dim); }
 .job-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   width: 100%;
   padding: 14px 16px;
@@ -246,7 +259,15 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
   font-size: 16px;
   background: var(--panel-2);
 }
-.job-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* job-title and job-tags used to be siblings competing for width in the
+   same row as the score badge — fine for a short title, but a long one had
+   nowhere to go except getting squeezed down to a sliver by the tag pills,
+   wrapping one word per line while the (short) tags sat centered across
+   the middle of that wrapped block. job-headline stacks them unconditionally
+   instead: the title always gets the full row to itself, tags always sit
+   on their own row underneath, regardless of title length. */
+.job-headline { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.job-title { display: flex; flex-direction: column; }
 .job-title strong { font-weight: 600; }
 .job-meta { color: var(--muted); font-size: 13px; }
 .job-tags { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -404,7 +425,6 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
   .nav { gap: 12px; padding: 10px 14px; }
   .nav-actions { width: 100%; margin-left: 0; }
   .main { padding: 18px 14px 60px; }
-  .job-head { flex-wrap: wrap; }
   .tbl, .tbl thead, .tbl tbody, .tbl tr, .tbl td, .tbl th { display: block; }
   .tbl thead { display: none; }
   .tbl tr { border-bottom: 1px solid var(--line); padding: 8px 0; }

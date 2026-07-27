@@ -35,7 +35,12 @@ const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 const MAX_SCORES_PER_RUN = Number(process.env.MAX_SCORES_PER_RUN || 120)
 // Postings not seen in any feed for this long are marked stale (greyed out in
 // the UI) rather than deleted — you may have already applied against them.
-const STALE_AFTER_DAYS = 45
+// None of the source APIs expose a "still accepting applications" flag, so
+// this absence-from-every-feed signal is the only general-purpose one
+// available; 45 days was generous enough to leave clearly-dead postings
+// visible for a month and a half. 14 gives a fair reappearance window
+// (feeds aren't always re-crawled daily) without lingering nearly that long.
+const STALE_AFTER_DAYS = 14
 
 // ---------- helpers ----------
 
@@ -327,6 +332,27 @@ async function main() {
       .lt('last_seen_at', cutoff)
       .eq('stale', false)
     if (staleErr) console.warn(`Could not mark stale postings: ${staleErr.message}`)
+
+    // ---- age out postings whose OWN stated deadline has passed ----
+    // A stronger, immediate signal than "stopped appearing in feeds" —
+    // straight from the posting's own text, when it states one at all.
+    const today = new Date().toISOString().slice(0, 10)
+    const { data: expired, error: expiredErr } = await db
+      .from('job_matches')
+      .select('posting_id')
+      .not('application_deadline', 'is', null)
+      .lt('application_deadline', today)
+    if (expiredErr) {
+      console.warn(`Could not check deadline-expired postings: ${expiredErr.message}`)
+    } else if (expired.length) {
+      const { error } = await db
+        .from('job_postings')
+        .update({ stale: true })
+        .in('id', expired.map(e => e.posting_id))
+        .eq('stale', false)
+      if (error) console.warn(`Could not mark deadline-expired postings: ${error.message}`)
+      else console.log(`Marked ${expired.length} postings stale — their own stated deadline has passed.`)
+    }
 
     await db
       .from('job_runs')

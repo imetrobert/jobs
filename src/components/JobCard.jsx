@@ -124,23 +124,26 @@ export default function JobCard({ job, onChanged }) {
     <article className={`job ${open ? 'open' : ''}`}>
       <button className="job-head" onClick={toggle}>
         <span className={`score tier-${job.tier}`}>{job.score}</span>
-        <span className="job-title">
-          <strong>{job.title}</strong>
-          <span className="job-meta">
-            {job.company || 'Unknown company'}
-            {job.location ? ` · ${job.location}` : ''}
-            {job.remote ? ' · Remote' : ''}
-            {pay ? ` · ${pay}` : ''}
+        <span className="job-headline">
+          <span className="job-title">
+            <strong>{job.title}</strong>
+            <span className="job-meta">
+              {job.company || 'Unknown company'}
+              {job.location ? ` · ${job.location}` : ''}
+              {job.remote ? ' · Remote' : ''}
+              {pay ? ` · ${pay}` : ''}
+              {job.application_deadline ? ` · Apply by ${job.application_deadline}` : ''}
+            </span>
           </span>
-        </span>
-        <span className="job-tags">
-          {job.app_status && job.app_status !== 'interested' && (
-            <span className="tag status">{job.app_status}</span>
-          )}
-          {job.location_fit && (
-            <span className={`tag loc-${job.location_fit}`}>{locationLabel(job.location_fit)}</span>
-          )}
-          <span className={`tag tier-${job.tier}`}>{job.tier}</span>
+          <span className="job-tags">
+            {job.app_status && job.app_status !== 'interested' && (
+              <span className="tag status">{job.app_status}</span>
+            )}
+            {job.location_fit && (
+              <span className={`tag loc-${job.location_fit}`}>{locationLabel(job.location_fit)}</span>
+            )}
+            <span className={`tag tier-${job.tier}`}>{job.tier}</span>
+          </span>
         </span>
       </button>
 

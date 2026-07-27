@@ -25,6 +25,17 @@ function relTime(iso) {
   return `${Math.floor(days / 30)} mo ago`
 }
 
+// A precise "done at" timestamp, not just the relative day count above —
+// the actual clock time so "done" reads as a real completion marker.
+function doneAt(iso) {
+  if (!iso) return null
+  const d = new Date(iso)
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const sameDay = d.toDateString() === new Date().toDateString()
+  if (sameDay) return `today at ${time}`
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${time}`
+}
+
 export default function Jobs({ session }) {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -50,6 +61,13 @@ export default function Jobs({ session }) {
       .eq('stale', false)
       .not('score', 'is', null)
       .gte('score', 35)
+      // Closed out: rejected or passed on, so it's done and shouldn't keep
+      // cluttering discovery — the Pipeline page is where it stays visible.
+      // Still-active statuses (applied/interviewing/offer) and untracked
+      // roles (app_status is null, the common case) both pass through — a
+      // plain .neq() would silently drop every untracked row too, since SQL
+      // treats "null <> value" as unknown rather than true.
+      .or('app_status.is.null,app_status.not.in.(rejected,passed)')
       // Location first: remote-and-Montreal-eligible, then close to Côte
       // Saint-Luc, then a real commute but still Montreal. Fit score only
       // breaks ties within the same location tier.
@@ -121,18 +139,29 @@ export default function Jobs({ session }) {
     <Layout
       actions={
         <button className="btn" onClick={onRefresh} disabled={refreshing || lastRun?.status === 'running'}>
-          {lastRun?.status === 'running' ? 'Scanning…' : refreshing ? 'Starting…' : 'Refresh now'}
+          {lastRun?.status === 'running' || refreshing ? (
+            <>
+              <span className="btn-spinner" aria-hidden="true" />
+              {lastRun?.status === 'running' ? 'Scanning…' : 'Starting…'}
+            </>
+          ) : (
+            'Refresh now'
+          )}
         </button>
       }
     >
       <header className="page-head">
         <h1>Matches</h1>
         <p className="muted">
-          {lastRun
-            ? lastRun.status === 'error'
-              ? `Last scan failed: ${lastRun.error}`
-              : `Last scan ${relTime(lastRun.started_at)} — ${lastRun.scored} roles scored, ${lastRun.fetched} postings seen.`
-            : 'No scan has run yet. Fill in your Profile, then hit Refresh now.'}
+          {!lastRun && 'No scan has run yet. Fill in your Profile, then hit Refresh now.'}
+          {lastRun?.status === 'running' && `Scanning — started ${relTime(lastRun.started_at)}.`}
+          {lastRun?.status === 'error' && `Last scan failed: ${lastRun.error}`}
+          {lastRun?.status === 'ok' && (
+            <>
+              <span className="done-check">✓ Done</span> — {doneAt(lastRun.finished_at || lastRun.started_at)},{' '}
+              {lastRun.scored} roles scored, {lastRun.fetched} postings seen.
+            </>
+          )}
         </p>
       </header>
 
