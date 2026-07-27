@@ -163,13 +163,18 @@ async function geminiOnce(model, body) {
   })
 
   if (res.status === 429) {
-    // Carry Google's own wording through. A 429 can mean a per-minute limit
-    // that clears in seconds or a per-day one that doesn't, and its body
-    // frequently lists BOTH metrics — so this is never classified here, only
-    // reported. Retrying and failing is cheap; giving up on a recoverable
-    // limit costs a whole scan.
-    const err = new Error(`429 from ${model}: ${summarizeQuotaError(await res.text())}`)
+    // Carry Google's own wording through, and never let a 429 abort the
+    // whole scan on its own — a per-minute limit clears in seconds and is
+    // always worth retrying. The one thing worth distinguishing is a
+    // per-DAY violation specifically, which retrying cannot fix: without
+    // this, a model whose free tier caps at (say) 20 requests/day gets
+    // re-tried and re-backed-off on every single batch for the rest of the
+    // run, each one burning ~15s before falling through — 24 batches turns
+    // a 3-minute scoring pass into 10+ minutes of pure retry overhead.
+    const raw = await res.text()
+    const err = new Error(`429 from ${model}: ${summarizeQuotaError(raw)}`)
     err.retryable = true
+    err.dailyExhausted = /PerDay/i.test(raw)
     throw err
   }
   if (res.status >= 500) {
@@ -187,14 +192,26 @@ async function geminiOnce(model, body) {
   return { text, model }
 }
 
+// Models found to be out of daily quota THIS PROCESS. A fresh scan (a new
+// GitHub Actions run) starts with this empty again — it's not persisted
+// anywhere, and doesn't need to be: it only exists to stop one model from
+// being retried 24 times in the same run once its daily wall is already known.
+const _dailyExhausted = new Set()
+
 async function geminiCall(body) {
   let lastErr
   for (const model of await geminiModelsToTry()) {
+    if (_dailyExhausted.has(model)) continue
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         return await paced(() => geminiOnce(model, body))
       } catch (err) {
         lastErr = err
+        if (err.dailyExhausted) {
+          _dailyExhausted.add(model)
+          console.warn(`    ${model}: ${err.message} — daily quota gone, skipping it for the rest of this run`)
+          break
+        }
         if (!err.retryable) {
           // A non-429/5xx error (bad model name, permission issue, malformed
           // request…) was previously dropped here with zero output — the log
