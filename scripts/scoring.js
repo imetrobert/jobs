@@ -340,6 +340,15 @@ function cleanTerms(value) {
 
 const LOCATION_FITS = ['remote_montreal', 'onsite_close', 'onsite_far', 'remote_unclear', 'not_montreal']
 
+// Same gazetteer named in the LOCATION FIT prompt — used here as a code-level
+// check on onsite_close/onsite_far, not just a prompt instruction. Gemini has
+// gotten this wrong before (a Calgary-only posting classified as "Montreal,
+// farther out" — Calgary isn't within 3,000km of the gazetteer), and unlike
+// remote_montreal there's no quote to demand as verification for an onsite
+// claim — the posting's own location field is the ground truth instead.
+const MONTREAL_AREA =
+  /montr[ée]al|c[ôo]te[- ]saint-luc|\bndg\b|notre-dame-de-gr[âa]ce|hampstead|montreal west|snowdon|mount royal|westmount|saint-laurent|lachine|dorval|pointe-claire|kirkland|dollard-des-ormeaux|beaconsfield|griffintown|verdun|rosemont|hochelaga|\blaval\b|longueuil|brossard|terrebonne|vaudreuil|repentigny/i
+
 function parseAssessment(raw, job) {
   let score = clampScore(raw?.score)
   const validTiers = ['exceptional', 'strong', 'possible', 'stretch', 'poor']
@@ -369,6 +378,17 @@ function parseAssessment(raw, job) {
   if (locationFit === 'remote_montreal') {
     locationEvidence = String(raw?.location_evidence || '').trim()
     if (!locationEvidence) locationFit = 'remote_unclear'
+  }
+
+  // Same check for onsite_close/onsite_far: verify against the posting's
+  // own location field rather than trusting the model's geography. A city
+  // not in the gazetteer — Calgary, say — has no business being "farther
+  // out [but still Montreal]"; that's not a borderline call, it's wrong.
+  if (
+    (locationFit === 'onsite_close' || locationFit === 'onsite_far') &&
+    !MONTREAL_AREA.test(job.location || '')
+  ) {
+    locationFit = 'not_montreal'
   }
 
   // "not_montreal" keeps its real score — it's excluded from the default
