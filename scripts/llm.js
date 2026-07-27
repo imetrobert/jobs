@@ -79,6 +79,32 @@ function stripFence(s) {
     .trim()
 }
 
+// A Gemini 429 body is mostly a boilerplate paragraph of documentation links,
+// and the one useful fact — WHICH quota ran out, and what its limit was — sits
+// past it in a `details` array. Truncating the raw text cuts off exactly the
+// part worth reading, so pull the quota facts out first.
+function summarizeQuotaError(raw) {
+  try {
+    const parsed = JSON.parse(raw)
+    const details = parsed?.error?.details || []
+    const bits = []
+    for (const d of details) {
+      for (const v of d.violations || []) {
+        const name = v.quotaId || v.quotaMetric || 'unknown quota'
+        bits.push(v.quotaValue ? `${name} (limit ${v.quotaValue})` : name)
+      }
+      if (d.retryDelay) bits.push(`retry after ${d.retryDelay}`)
+    }
+    if (bits.length) return `exceeded ${bits.join('; ')}`
+    if (parsed?.error?.message) {
+      return parsed.error.message.split('. ')[0].replace(/\s+/g, ' ').slice(0, 200)
+    }
+  } catch {
+    /* not JSON — fall through to the raw text */
+  }
+  return String(raw).replace(/\s+/g, ' ').slice(0, 300)
+}
+
 async function geminiOnce(model, body) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`
   const res = await fetch(url, {
@@ -93,8 +119,7 @@ async function geminiOnce(model, body) {
     // frequently lists BOTH metrics — so this is never classified here, only
     // reported. Retrying and failing is cheap; giving up on a recoverable
     // limit costs a whole scan.
-    const detail = (await res.text()).replace(/\s+/g, ' ').slice(0, 300)
-    const err = new Error(`429 from ${model}: ${detail}`)
+    const err = new Error(`429 from ${model}: ${summarizeQuotaError(await res.text())}`)
     err.retryable = true
     throw err
   }

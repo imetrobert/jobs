@@ -25,7 +25,20 @@ async function getJSON(url, opts = {}) {
     ...opts,
     headers: { 'User-Agent': UA, Accept: 'application/json', ...(opts.headers || {}) },
   })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url.split('?')[0]}`)
+  if (!res.ok) {
+    // Include the provider's own explanation. A bare "400 Bad Request" says
+    // nothing about WHICH parameter it objected to, which turns a one-line fix
+    // into a guessing game.
+    let detail = ''
+    try {
+      detail = (await res.text()).replace(/\s+/g, ' ').trim().slice(0, 300)
+    } catch {
+      /* body already consumed or unreadable — status alone will have to do */
+    }
+    throw new Error(
+      `${res.status} ${res.statusText} for ${url.split('?')[0]}${detail ? ` — ${detail}` : ''}`
+    )
+  }
   return res.json()
 }
 
@@ -64,12 +77,15 @@ export async function fetchAdzuna({ token = 'ca', queries, maxPages = 1, env }) 
   const out = []
   for (const q of queries) {
     for (let page = 1; page <= maxPages; page++) {
+      // Only documented parameters. `content_type` used to be sent here and is
+      // not one — Adzuna spells it `content-type`, and rejects the whole
+      // request with a 400 rather than ignoring the unknown key. JSON is the
+      // default for this endpoint anyway, so it is simply gone.
       const params = new URLSearchParams({
         app_id: ADZUNA_APP_ID,
         app_key: ADZUNA_APP_KEY,
         results_per_page: '50',
         what: q,
-        content_type: 'application/json',
         max_days_old: '45',
         sort_by: 'date',
       })
