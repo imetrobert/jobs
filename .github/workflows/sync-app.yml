@@ -54,11 +54,22 @@ jobs:
           set -euo pipefail
           test -d .source/jobs-app || { echo "jobs-app not found on that branch"; exit 1; }
 
-          # Trailing slash copies the CONTENTS, dotfiles included. .github is
-          # excluded because the Actions token may not write workflow files;
-          # the helper workflows exclude themselves.
-          rsync -a --delete-after \
+          # Trailing slash copies the CONTENTS, dotfiles included.
+          #
+          # --delete removes files dropped upstream, which also means anything
+          # in this directory that the source lacks. EXCLUDING .git IS LOAD
+          # BEARING: without it rsync deletes the repository metadata and every
+          # git command afterwards fails with "not a git repository" (exit 128).
+          # .github is excluded because the Actions token may not write workflow
+          # files; the helper workflows and build output exclude themselves.
+          # --checksum compares file CONTENT rather than size-and-timestamp.
+          # Both repos are checked out moments apart, so two versions of the
+          # same file can share a size and an mtime and be silently skipped by
+          # the default quick check. The tree is small; correctness wins.
+          rsync -a --checksum --delete-after \
+            --exclude '.git' \
             --exclude '.github' \
+            --exclude '.source' \
             --exclude 'bootstrap-workflow.yml' \
             --exclude 'sync-workflow.yml' \
             --exclude 'node_modules' \
@@ -66,6 +77,12 @@ jobs:
             .source/jobs-app/ ./
 
           rm -rf .source
+
+          # Fail loudly rather than committing into a broken checkout.
+          git rev-parse --git-dir > /dev/null 2>&1 || {
+            echo "::error::.git was removed — refusing to continue"
+            exit 1
+          }
 
       - name: Commit if anything changed
         id: commit
@@ -90,7 +107,11 @@ jobs:
           {
             echo "### Sync app code"
             echo ""
-            if [ "${{ steps.commit.outputs.changed }}" = "true" ]; then
+            if [ "${{ steps.commit.outcome }}" != "success" ]; then
+              echo "**The sync failed — nothing in this repo was changed.**"
+              echo ""
+              echo "See the red step above for the reason."
+            elif [ "${{ steps.commit.outputs.changed }}" = "true" ]; then
               echo "Updated these files:"
               echo ""
               echo '```'
