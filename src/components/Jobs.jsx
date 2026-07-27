@@ -158,10 +158,16 @@ export default function Jobs({ session }) {
       <header className="page-head">
         <h1>Matches</h1>
         <p className="muted">
-          {!lastRun && 'No scan has run yet. Fill in your Profile, then hit Refresh now.'}
+          {/* refreshing flips true the instant Refresh is clicked, same signal
+              the button uses — lastRun.status lags a few seconds behind (it
+              only updates once a reload sees the new row), so gating on it
+              alone left "✓ Done" from the PREVIOUS scan showing while a new
+              one was already underway. */}
+          {refreshing && lastRun?.status !== 'running' && 'Starting a new scan…'}
           {lastRun?.status === 'running' && `Scanning — started ${relTime(lastRun.started_at)}.`}
-          {lastRun?.status === 'error' && `Last scan failed: ${lastRun.error}`}
-          {lastRun?.status === 'ok' && (
+          {!refreshing && !lastRun && 'No scan has run yet. Fill in your Profile, then hit Refresh now.'}
+          {!refreshing && lastRun?.status === 'error' && `Last scan failed: ${lastRun.error}`}
+          {!refreshing && lastRun?.status === 'ok' && (
             <>
               <span className="done-check">✓ Done</span> — {doneAt(lastRun.finished_at || lastRun.started_at)},{' '}
               {lastRun.scored} roles scored, {lastRun.fetched} postings seen.
