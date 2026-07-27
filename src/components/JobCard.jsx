@@ -212,34 +212,31 @@ export default function JobCard({ job, onChanged }) {
 
           <div className="job-actions">
             {job.url && (
-              // Adzuna's US-region listing pages wall themselves off from
-              // visitors they detect as browsing from outside the US
-              // ("Sorry, this job is not available in your region") — a
-              // restriction on Adzuna's own redirect page, unrelated to
-              // whether the employer would actually hire remotely from
-              // Canada. Every posting sourced this way is tagged
-              // adzuna:us, so it's known in advance rather than discovered
-              // by clicking through to a dead end.
-              job.source === 'adzuna:us' ? (
-                <a
-                  className="btn ghost"
-                  href={`https://www.google.com/search?q=${encodeURIComponent(
-                    // Exclude adzuna.com itself — it's often the top result
-                    // for its own listing, which just bounces back into the
-                    // same regional block this link exists to route around.
-                    `${job.company || ''} ${job.title} -site:adzuna.com`.trim()
-                  )}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Adzuna's US listing pages often block visitors browsing from outside the US, regardless of the job itself — this searches for the posting elsewhere instead"
-                >
-                  Find posting ↗
-                </a>
-              ) : (
-                <a className="btn ghost" href={job.url} target="_blank" rel="noreferrer">
-                  View posting ↗
-                </a>
-              )
+              <a className="btn ghost" href={job.url} target="_blank" rel="noreferrer">
+                View posting ↗
+              </a>
+            )}
+            {job.source?.startsWith('adzuna:') && (
+              // Adzuna sometimes walls off its own listing page ("Sorry,
+              // this job is not available in your region") for a US-located
+              // employer, even when that posting was surfaced through
+              // Adzuna's CANADIAN search — the block tracks the listing's
+              // own location, not which of Adzuna's endpoints returned it in
+              // our results. There's no reliable way to predict which
+              // specific links will hit it, so every Adzuna-sourced card
+              // gets this fallback alongside the direct link rather than
+              // only the ones a (wrong) heuristic guessed were at risk.
+              <a
+                className="btn ghost sm"
+                href={`https://www.google.com/search?q=${encodeURIComponent(
+                  `${job.company || ''} ${job.title} -site:adzuna.com -site:adzuna.ca`.trim()
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+                title="If the link above says 'not available in your region', Adzuna is blocking its own page — this searches for the posting elsewhere instead"
+              >
+                Search instead ↗
+              </a>
             )}
             <button className="btn" onClick={generate} disabled={busy}>
               {busy ? 'Drafting…' : docs ? 'Regenerate' : 'Draft cover letter + CV'}

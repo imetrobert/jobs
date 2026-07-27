@@ -281,6 +281,22 @@ async function claudeCall({ system, prompt, schema, effort }) {
 // ---------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------
+// Gemini's responseSchema accepts a subset of JSON Schema/OpenAPI — notably
+// not additionalProperties, which our schemas set for a different reason
+// (catching a model returning surprise keys). Without stripping it, passing
+// the schema through as-is either gets ignored or rejected depending on the
+// model. Strip just that, recursively, rather than maintain a second
+// hand-written copy of every schema for Gemini specifically.
+function toGeminiSchema(schema) {
+  if (Array.isArray(schema)) return schema.map(toGeminiSchema)
+  if (schema && typeof schema === 'object') {
+    const { additionalProperties, ...rest } = schema
+    for (const k of Object.keys(rest)) rest[k] = toGeminiSchema(rest[k])
+    return rest
+  }
+  return schema
+}
+
 export async function generateJSON({ system, prompt, schema, effort }) {
   const provider = activeProvider()
   if (provider === 'claude') {
@@ -288,10 +304,19 @@ export async function generateJSON({ system, prompt, schema, effort }) {
     return { data: JSON.parse(stripFence(text)), model }
   }
   if (provider === 'gemini') {
+    // Previously `schema` was accepted by this function but never actually
+    // reached Gemini's request — only responseMimeType was set, so "required"
+    // fields were nothing more than a prompt suggestion. Gemini could (and
+    // did) drop a field like location_fit some fraction of the time with
+    // nothing to catch it. responseSchema makes the API itself enforce it.
     const { text, model } = await geminiCall({
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.2,
+        ...(schema ? { responseSchema: toGeminiSchema(schema) } : {}),
+      },
     })
     return { data: JSON.parse(stripFence(text)), model }
   }

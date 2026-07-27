@@ -327,10 +327,22 @@ function parseAssessment(raw, job) {
   // Not workable from Montreal is a hard exclusion, same treatment as a
   // deal-breaker caught in prefilterReason: force the row out of the
   // score >= 35 view instead of letting a strong fit score outrank it.
-  if (locationFit === 'not_montreal') {
+  //
+  // A MISSING location_fit gets the same treatment, not a pass. Gemini's
+  // responseSchema now enforces the field at the API level, so this should
+  // be rare — but "we don't actually know if this is workable from Montreal"
+  // is not a reason to show a role at full score. Silently keeping the
+  // score here is exactly how Toronto-onsite, no-remote-mentioned postings
+  // were slipping through as "strong" matches before this field existed.
+  if (locationFit === 'not_montreal' || !locationFit) {
     score = 0
     tier = 'poor'
-    gaps = [gaps, 'Filtered: no way to do this role from Montreal (not remote-eligible, and the office is outside the greater Montreal area).']
+    gaps = [
+      gaps,
+      locationFit === 'not_montreal'
+        ? 'Filtered: no way to do this role from Montreal (not remote-eligible, and the office is outside the greater Montreal area).'
+        : 'Filtered: location fit could not be determined for this posting.',
+    ]
       .filter(Boolean)
       .join(' ')
   }
