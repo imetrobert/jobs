@@ -13,18 +13,67 @@
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-5'
 
-// Same fallback chain as the blog pipeline (scripts/gemini.py), so a quota
-// wall on one model doesn't fail the whole scan.
-const GEMINI_MODELS = process.env.GEMINI_MODEL
-  ? [process.env.GEMINI_MODEL]
-  : ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']
+// Google deprecates Gemini model *names* faster than this file gets edited —
+// gemini-2.5-flash and gemini-2.5-flash-lite went from "the recommended pick"
+// to "404, no longer available to new users" within months, and only for
+// projects created after some cutoff, so an old project can still see a model
+// a new one can't. Hardcoding a chain here just means it goes stale again.
+// Instead, ask the key itself what it can call, once per process, and rank
+// the answer — small/fast ("flash") models first, since this is a free-tier
+// batch scorer, not a reasoning workload.
+const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-2.0-flash']
+let _discoveredModels = null
+
+function modelRank(name) {
+  const m = name.match(/gemini-(\d+)(?:\.(\d+))?/)
+  const version = m ? Number(m[1]) * 100 + Number(m[2] || 0) : 0
+  const isPreview = /preview|exp(?:erimental)?\b/i.test(name)
+  const isLite = /lite/i.test(name)
+  // Newest generation first, a stable release over a preview one, and the
+  // full model just ahead of its own lite sibling (lite is tried right after
+  // it in the same chain either way, so this only breaks ties).
+  return version * 10 - (isPreview ? 5 : 0) - (isLite ? 1 : 0)
+}
+
+async function discoverGeminiModels() {
+  if (_discoveredModels) return _discoveredModels
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`
+    )
+    if (!res.ok) throw new Error(`ListModels ${res.status}`)
+    const data = await res.json()
+    const usable = (data.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => String(m.name).replace(/^models\//, ''))
+      .filter(n => !/embedding|image|imagen|tts|audio|aqa|vision|veo/i.test(n))
+    const flashOnly = usable.filter(n => /flash/i.test(n))
+    const pool = (flashOnly.length ? flashOnly : usable).sort(
+      (a, b) => modelRank(b) - modelRank(a)
+    )
+    if (pool.length) {
+      _discoveredModels = [...new Set(pool)].slice(0, 4)
+      console.log(`  Gemini models available to this key: ${_discoveredModels.join(', ')}`)
+      return _discoveredModels
+    }
+  } catch (err) {
+    console.warn(`  could not list Gemini models (${err.message}); using hardcoded fallback`)
+  }
+  _discoveredModels = FALLBACK_MODELS
+  return _discoveredModels
+}
+
+// An explicit GEMINI_MODEL always wins and skips discovery entirely.
+async function geminiModelsToTry() {
+  return process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : discoverGeminiModels()
+}
 
 // Free-tier pacing. Gemini's free tier is limited per minute AND per day, and
 // the per-minute limit is the one that bites during a scan. Requests are
 // serialized through a single queue with a minimum gap between them.
 //
-// Default 8/min sits deliberately under gemini-2.5-flash's free-tier ceiling of
-// ~10 requests/minute. Running at or above the ceiling still "works" — the
+// Default 8/min sits deliberately under a typical Gemini flash model's free-tier
+// ceiling of ~10 requests/minute. Running at or above the ceiling still "works" — the
 // backoff below absorbs the 429s — but it turns most requests into a retry and
 // makes a two-minute scan take ten. Slower pacing is faster overall here.
 // Google sets these per project and no longer publishes one universal table;
@@ -140,7 +189,7 @@ async function geminiOnce(model, body) {
 
 async function geminiCall(body) {
   let lastErr
-  for (const model of GEMINI_MODELS) {
+  for (const model of await geminiModelsToTry()) {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         return await paced(() => geminiOnce(model, body))

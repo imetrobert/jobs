@@ -33,7 +33,47 @@ function json(body: unknown, status = 200): Response {
 }
 
 const CLAUDE_MODEL = Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5'
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']
+
+// See scripts/llm.js for why this isn't a hardcoded list: Google deprecates
+// Gemini model names for new projects faster than this file gets edited, so
+// the models an old key can call and a brand-new key can call can differ.
+// Ask the key itself instead of guessing.
+let cachedGeminiModels: string[] | null = null
+
+function modelRank(name: string): number {
+  const m = name.match(/gemini-(\d+)(?:\.(\d+))?/)
+  const version = m ? Number(m[1]) * 100 + Number(m[2] || 0) : 0
+  const isPreview = /preview|exp(?:erimental)?\b/i.test(name)
+  const isLite = /lite/i.test(name)
+  return version * 10 - (isPreview ? 5 : 0) - (isLite ? 1 : 0)
+}
+
+async function discoverGeminiModels(key: string): Promise<string[]> {
+  if (cachedGeminiModels) return cachedGeminiModels
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`)
+    if (!res.ok) throw new Error(`ListModels ${res.status}`)
+    const data = await res.json()
+    const usable = (data.models || [])
+      .filter((m: { supportedGenerationMethods?: string[] }) =>
+        (m.supportedGenerationMethods || []).includes('generateContent')
+      )
+      .map((m: { name: string }) => m.name.replace(/^models\//, ''))
+      .filter((n: string) => !/embedding|image|imagen|tts|audio|aqa|vision|veo/i.test(n))
+    const flashOnly = usable.filter((n: string) => /flash/i.test(n))
+    const pool = (flashOnly.length ? flashOnly : usable).sort(
+      (a: string, b: string) => modelRank(b) - modelRank(a)
+    )
+    if (pool.length) {
+      cachedGeminiModels = [...new Set(pool)].slice(0, 4) as string[]
+      return cachedGeminiModels
+    }
+  } catch {
+    // fall through to the hardcoded fallback below
+  }
+  cachedGeminiModels = ['gemini-flash-latest', 'gemini-2.0-flash']
+  return cachedGeminiModels
+}
 
 async function callClaude(system: string, prompt: string): Promise<string> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -63,7 +103,7 @@ async function callClaude(system: string, prompt: string): Promise<string> {
 async function callGemini(system: string, prompt: string): Promise<string> {
   const key = Deno.env.get('GEMINI_API_KEY')!
   let lastErr: Error | null = null
-  for (const model of GEMINI_MODELS) {
+  for (const model of await discoverGeminiModels(key)) {
     try {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
@@ -78,7 +118,9 @@ async function callGemini(system: string, prompt: string): Promise<string> {
         }
       )
       if (!res.ok) {
-        lastErr = new Error(`Gemini ${res.status} on ${model}`)
+        const detail = await res.text().catch(() => '')
+        lastErr = new Error(`Gemini ${res.status} on ${model}: ${detail.slice(0, 200)}`)
+        console.error(`  ${lastErr.message}`)
         continue
       }
       const data = await res.json()
