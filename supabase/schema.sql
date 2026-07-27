@@ -256,6 +256,14 @@ select
   m.ats_keywords_covered,
   m.ats_keywords_missing,
   m.pitch_angle,
+  m.scored_at,
+  a.status as app_status,
+  (a.cover_letter is not null) as has_cover_letter,
+  -- New columns go LAST. Postgres's CREATE OR REPLACE VIEW only allows
+  -- appending — inserting a column before scored_at here once broke a
+  -- live deploy with "cannot change name of view column scored_at to
+  -- location_fit", because everything after the insertion point shifted
+  -- ordinal position and looked like a rename to Postgres.
   m.location_fit,
   -- Sort key, not a display value: lower sorts first. Remote-and-Montreal-
   -- eligible leads, then close to Côte Saint-Luc, then a real commute but
@@ -267,10 +275,7 @@ select
     when 'onsite_close' then 2
     when 'onsite_far' then 3
     else 3
-  end as location_priority,
-  m.scored_at,
-  a.status as app_status,
-  (a.cover_letter is not null) as has_cover_letter
+  end as location_priority
 from job_postings p
 left join job_matches m on m.posting_id = p.id
 left join job_applications a on a.posting_id = p.id;
