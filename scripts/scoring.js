@@ -65,6 +65,11 @@ const ASSESSMENT = {
       description:
         'Whether and how this candidate could physically work this role from Montreal. See LOCATION FIT in the system prompt for the exact categories.',
     },
+    negotiation_note: {
+      type: 'string',
+      description:
+        'ONLY when location_fit is "not_montreal" AND the candidate is an exceptional or strong enough match that proactively raising a remote/hybrid ask would be reasonable: one or two sentences on specifically why. Empty string in every other case, including the (much more common) decent-but-unremarkable "not_montreal" fit.',
+    },
   },
   required: [
     'ref',
@@ -78,6 +83,7 @@ const ASSESSMENT = {
     'ats_keywords_missing',
     'pitch_angle',
     'location_fit',
+    'negotiation_note',
   ],
   additionalProperties: false,
 }
@@ -266,9 +272,11 @@ The candidate lives in Côte Saint-Luc, on the west-central part of the Island o
 - "onsite_close" — requires physical presence (hybrid or fully on-site) at a location within roughly 10km of Côte Saint-Luc. Treat Côte Saint-Luc itself, NDG, Hampstead, Montreal West, Snowdon, the Town of Mount Royal, Westmount, Saint-Laurent, Lachine, and the West Island suburbs (Dorval, Pointe-Claire, Kirkland, Dollard-des-Ormeaux, Beaconsfield) as close.
 - "onsite_far" — requires physical presence somewhere in the greater Montreal area, but more than roughly 10km from Côte Saint-Luc: downtown Montreal, Old Montreal, the Plateau, Griffintown, Verdun, Rosemont, Hochelaga, and off-island suburbs (Laval, Longueuil, Brossard, Terrebonne, Vaudreuil-Dorion, Repentigny) all count as far, even though they are still commutable.
 - "remote_unclear" — genuinely remote, but you cannot confidently place it in either "remote_montreal" or "not_montreal". Use this for the middle ground: signals exist but don't add up to a clear yes or a clear no, or the posting is only ambiguously US-leaning (mentions one US city as "location" without saying whether that's a hard requirement or just where the team happens to sit, say). This tier exists so you never have to guess a binary answer you don't actually have evidence for.
-- "not_montreal" — no way to do this job from Montreal at all. This is the confident-no case: either the office is outside the greater Montreal area with no remote option, or the remote posting is confidently restricted elsewhere. For the latter, watch for tells even when the posting never says "US only" outright: "must be authorized to work in the United States without sponsorship", a requirement to reside in one or more named US states, pay stated only as a US salary band with US-specific benefits (401(k), US federal holidays), EEO/OFCCP/E-Verify boilerplate (US-specific legal language), or references to needing a US Social Security Number or I-9. Any one of those, unless the posting separately and explicitly welcomes Canadian/international candidates anyway, is a confident no — use "not_montreal", not "remote_unclear" (this posting does offer a clear answer, it's just "no"), and not the discipline of guessing "remote_montreal" out of charity.
+- "not_montreal" — every posting outside Montreal that doesn't explicitly say it accepts remote work from Montreal, Quebec, or Canada generally. This covers BOTH cases: the office is outside the greater Montreal area with no remote option at all, AND the posting is remote but confidently restricted elsewhere. For the latter, watch for tells even when the posting never says "US only" outright: "must be authorized to work in the United States without sponsorship", a requirement to reside in one or more named US states, pay stated only as a US salary band with US-specific benefits (401(k), US federal holidays), EEO/OFCCP/E-Verify boilerplate (US-specific legal language), or references to needing a US Social Security Number or I-9. Silence on geography is NOT this category on its own for a remote posting — that is "remote_montreal" or "remote_unclear" depending on confidence — but a posting whose location is simply a specific non-Montreal city with no remote language anywhere IS "not_montreal", regardless of how strong the fit otherwise is. This tier does not affect "score", which stays the candidate's genuine fit — it only means the role is excluded from the default list and surfaced separately, behind a toggle, precisely so a strong score is never hidden, just not mixed in with roles actually workable from Montreal.
 
-So for any remote posting, ask two questions in order: (1) is there a clear reason to say no (a real restriction, explicit or implied)? If yes → "not_montreal". (2) If not, is there enough — explicit welcome, or genuine silence with zero geography language — to say yes with real confidence? If yes → "remote_montreal". If neither question resolves cleanly, that is exactly what "remote_unclear" is for: don't force it into whichever of the other two feels safer.
+Whenever you use "not_montreal", also consider "negotiation_note": fill it in ONLY when the candidate is such an exceptional or strong match that proactively asking about a remote or hybrid arrangement would be a reasonable move for someone at this level — executive scope where seniority itself often opens a conversation a posting's stated policy wouldn't extend to a typical applicant. Leave it as an empty string for the (much more common) case of a decent-but-unremarkable fit; it exists to flag the standout cases, not to editorialize on every "not_montreal" row.
+
+So for any remote posting, ask two questions in order: (1) is there a clear reason to say no (a real restriction, explicit or implied, or simply a named non-Montreal location with no remote language)? If yes → "not_montreal". (2) If not, is there enough — explicit welcome, or genuine silence with zero geography language — to say yes with real confidence? If yes → "remote_montreal". If neither question resolves cleanly, that is exactly what "remote_unclear" is for: don't force it into whichever of the other two feels safer.
 
 If a non-remote posting's location isn't stated clearly, judge from context (company HQ, named office city) and prefer "onsite_far" over guessing "close" if it's genuinely unresolvable — the cost of ranking a role slightly too low is much smaller than the cost of ranking an out-of-reach one too high. This field never affects "score" — a role can score 90 for fit and still be "not_montreal" or "remote_unclear"; these are independent judgments and all of them must be honest.
 
@@ -324,27 +332,24 @@ function parseAssessment(raw, job) {
   const locationFit = LOCATION_FITS.includes(raw?.location_fit) ? raw.location_fit : null
   let gaps = String(raw?.gaps || '').trim()
 
-  // Not workable from Montreal is a hard exclusion, same treatment as a
-  // deal-breaker caught in prefilterReason: force the row out of the
-  // score >= 35 view instead of letting a strong fit score outrank it.
+  // "not_montreal" keeps its real score — it's excluded from the default
+  // list by a query filter in Jobs.jsx (only shown behind the "worth
+  // negotiating" toggle), not by being nerfed here. That's deliberate:
+  // zeroing it would throw away a genuinely strong fit score for a role
+  // that's only excluded on location, not on merit.
   //
-  // A MISSING location_fit gets the same treatment, not a pass. Gemini's
-  // responseSchema now enforces the field at the API level, so this should
-  // be rare — but "we don't actually know if this is workable from Montreal"
-  // is not a reason to show a role at full score. Silently keeping the
-  // score here is exactly how Toronto-onsite, no-remote-mentioned postings
-  // were slipping through as "strong" matches before this field existed.
-  if (locationFit === 'not_montreal' || !locationFit) {
+  // A MISSING location_fit does NOT get that treatment — "we don't
+  // actually know if this is workable from Montreal" is a real unknown,
+  // not a confirmed "not_montreal" classification, so it's hard-excluded
+  // (score zeroed) rather than left to slip through at full score.
+  // Gemini's responseSchema now enforces the field at the API level, so
+  // this should be rare — but it's exactly how Toronto-onsite,
+  // no-remote-mentioned postings were slipping through as "strong" matches
+  // before this field existed.
+  if (!locationFit) {
     score = 0
     tier = 'poor'
-    gaps = [
-      gaps,
-      locationFit === 'not_montreal'
-        ? 'Filtered: no way to do this role from Montreal (not remote-eligible, and the office is outside the greater Montreal area).'
-        : 'Filtered: location fit could not be determined for this posting.',
-    ]
-      .filter(Boolean)
-      .join(' ')
+    gaps = [gaps, 'Filtered: location fit could not be determined for this posting.'].filter(Boolean).join(' ')
   }
 
   return {
@@ -359,6 +364,8 @@ function parseAssessment(raw, job) {
     ats_keywords_missing: cleanTerms(raw?.ats_keywords_missing),
     pitch_angle: String(raw?.pitch_angle || '').trim(),
     location_fit: locationFit,
+    negotiation_note:
+      locationFit === 'not_montreal' ? String(raw?.negotiation_note || '').trim() || null : null,
   }
 }
 

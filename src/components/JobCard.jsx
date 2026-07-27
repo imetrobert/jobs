@@ -59,6 +59,7 @@ function locationLabel(fit) {
     case 'onsite_close': return 'Close to Côte St-Luc'
     case 'onsite_far': return 'Montreal · farther out'
     case 'remote_unclear': return 'Remote · Canada unclear'
+    case 'not_montreal': return 'Not Montreal · no remote'
     default: return null
   }
 }
@@ -163,6 +164,12 @@ export default function JobCard({ job, onChanged }) {
               <p className={`risk risk-${riskLevel(job.overqualification_risk)}`}>
                 {job.overqualification_risk}
               </p>
+            </section>
+          )}
+          {job.negotiation_note && (
+            <section>
+              <h4>Not remote — worth asking anyway?</h4>
+              <p className="risk risk-moderate">{job.negotiation_note}</p>
             </section>
           )}
           {job.comp_assessment && (

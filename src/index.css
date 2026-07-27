@@ -194,6 +194,17 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
   gap: 7px;
 }
 .tab.on { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
+
+.negotiable-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 16px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.negotiable-toggle input { width: auto; margin: 0; }
 .tab.link { border-style: dashed; }
 .pill {
   background: rgba(255, 255, 255, .09);
@@ -263,6 +274,10 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .loc-onsite_close { background: rgba(79, 156, 249, .18); color: var(--accent); }
 .loc-onsite_far { background: rgba(210, 153, 34, .16); color: var(--warn); }
 .loc-remote_unclear { background: rgba(139, 148, 158, .16); color: var(--muted); }
+/* Deliberately a different hue from the four tiers above — this one isn't
+   Montreal-workable at all, it's excluded from the default list entirely
+   and only surfaced when the "worth negotiating" toggle is on. */
+.loc-not_montreal { background: rgba(163, 113, 247, .18); color: #a371f7; }
 
 .job-body { padding: 4px 16px 18px; border-top: 1px solid var(--line); }
 .job-body section { margin: 14px 0; }
