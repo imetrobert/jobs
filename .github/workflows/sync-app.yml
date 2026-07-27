@@ -1,0 +1,105 @@
+# Sync: pull the latest app code from the source repo into this one.
+#
+# WHY THIS EXISTS
+# Fixes to the app are written in imetrobert/imetrobert.github.io. Copying them
+# across by hand, file by file, is slow and easy to get wrong — and every fix
+# means doing it again. This does it in one click.
+#
+# HOW TO USE
+#   1. In the `jobs` repo: Add file -> Create new file
+#   2. Name it exactly:  .github/workflows/sync-app.yml
+#   3. Paste this whole file in, commit to main
+#   4. Any time there's a fix: Actions -> Sync app code -> Run workflow
+#
+# Safe to run whenever. If nothing changed upstream it says so and stops.
+#
+# It deliberately does NOT touch .github/workflows/ — GitHub blocks the built-in
+# Actions token from writing workflow files. Those stay hand-managed, and they
+# change far less often than the app code.
+
+name: Sync app code
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch in the source repo to pull from'
+        required: false
+        default: 'claude/personal-job-matcher-42xd2q'
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-app
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Fetch the source
+        uses: actions/checkout@v4
+        with:
+          repository: imetrobert/imetrobert.github.io
+          ref: ${{ inputs.ref || 'claude/personal-job-matcher-42xd2q' }}
+          path: .source
+
+      - name: Copy the app across
+        run: |
+          set -euo pipefail
+          test -d .source/jobs-app || { echo "jobs-app not found on that branch"; exit 1; }
+
+          # Trailing slash copies the CONTENTS, dotfiles included. .github is
+          # excluded because the Actions token may not write workflow files;
+          # the helper workflows exclude themselves.
+          rsync -a --delete-after \
+            --exclude '.github' \
+            --exclude 'bootstrap-workflow.yml' \
+            --exclude 'sync-workflow.yml' \
+            --exclude 'node_modules' \
+            --exclude 'dist' \
+            .source/jobs-app/ ./
+
+          rm -rf .source
+
+      - name: Commit if anything changed
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name "Sync Bot"
+          git config user.email "actions@github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date — nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --staged --name-only > /tmp/changed.txt
+            git commit -m "Sync app code from source repo"
+            git push
+          fi
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### Sync app code"
+            echo ""
+            if [ "${{ steps.commit.outputs.changed }}" = "true" ]; then
+              echo "Updated these files:"
+              echo ""
+              echo '```'
+              cat /tmp/changed.txt
+              echo '```'
+              echo ""
+              echo "The site rebuilds automatically. To re-score with the new code,"
+              echo "run **Job scan** next."
+            else
+              echo "Already up to date — no changes to pull."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
