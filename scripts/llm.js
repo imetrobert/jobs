@@ -146,8 +146,18 @@ async function geminiCall(body) {
         return await paced(() => geminiOnce(model, body))
       } catch (err) {
         lastErr = err
-        if (!err.retryable) break // real error, not worth retrying
-        if (attempt === MAX_RETRIES) break // exhausted here; fall to next model
+        if (!err.retryable) {
+          // A non-429/5xx error (bad model name, permission issue, malformed
+          // request…) was previously dropped here with zero output — the log
+          // would jump straight to whichever model failed next, making that
+          // one look like the sole cause when it was really the last domino.
+          console.warn(`    ${model}: ${err.message} — not retryable, moving to next model`)
+          break
+        }
+        if (attempt === MAX_RETRIES) {
+          console.warn(`    ${model}: ${err.message} — out of retries, moving to next model`)
+          break
+        }
         // Exponential backoff: 4s then 8s. Deliberately short — a per-minute
         // limit clears inside that, and anything that doesn't is better
         // reported than waited out.
