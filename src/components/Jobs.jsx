@@ -43,6 +43,10 @@ export default function Jobs({ session }) {
         .eq('stale', false)
         .not('score', 'is', null)
         .gte('score', 35)
+        // Location first: remote-and-Montreal-eligible, then close to Côte
+        // Saint-Luc, then a real commute but still Montreal. Fit score only
+        // breaks ties within the same location tier.
+        .order('location_priority', { ascending: true })
         .order('score', { ascending: false })
         .limit(200),
       supabase.from('job_runs').select('*').order('started_at', { ascending: false }).limit(1),

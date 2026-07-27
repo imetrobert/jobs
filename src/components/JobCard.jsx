@@ -51,6 +51,17 @@ function riskLevel(text) {
   return m ? m[1].toLowerCase() : 'unknown'
 }
 
+// Short label for the location_fit badge — kept in sync with the tiers
+// scoring.js's LOCATION FIT prompt section asks the model to classify into.
+function locationLabel(fit) {
+  switch (fit) {
+    case 'remote_montreal': return 'Remote · Montreal OK'
+    case 'onsite_close': return 'Close to Côte St-Luc'
+    case 'onsite_far': return 'Montreal · farther out'
+    default: return null
+  }
+}
+
 function slug(s) {
   return String(s || 'role').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
 }
@@ -119,6 +130,9 @@ export default function JobCard({ job, onChanged }) {
         <span className="job-tags">
           {job.app_status && job.app_status !== 'interested' && (
             <span className="tag status">{job.app_status}</span>
+          )}
+          {job.location_fit && (
+            <span className={`tag loc-${job.location_fit}`}>{locationLabel(job.location_fit)}</span>
           )}
           <span className={`tag tier-${job.tier}`}>{job.tier}</span>
         </span>

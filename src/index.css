@@ -256,6 +256,13 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .tier-stretch, .tier-poor { background: rgba(139, 148, 158, .16); color: var(--muted); }
 .tag.status { background: rgba(255, 255, 255, .1); color: var(--text); }
 
+/* Location fit — how you'd actually work the role relative to Côte
+   Saint-Luc. Same ranking this badge reflects also drives the sort order
+   in Jobs.jsx (location_priority before score). */
+.loc-remote_montreal { background: rgba(63, 185, 80, .18); color: var(--good); }
+.loc-onsite_close { background: rgba(79, 156, 249, .18); color: var(--accent); }
+.loc-onsite_far { background: rgba(210, 153, 34, .16); color: var(--warn); }
+
 .job-body { padding: 4px 16px 18px; border-top: 1px solid var(--line); }
 .job-body section { margin: 14px 0; }
 .job-body h4 {

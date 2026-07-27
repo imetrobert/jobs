@@ -141,6 +141,13 @@ create table if not exists job_matches (
   ats_keywords_covered text,
   ats_keywords_missing text,
   pitch_angle text,
+  -- Where this posting sits relative to Côte Saint-Luc: fully remote and
+  -- Montreal-eligible, on-site/hybrid close by, on-site/hybrid but a real
+  -- commute, or no way to do it from Montreal at all. Null on rows scored
+  -- before this column existed — treated as the lowest included priority
+  -- until they're rescored, rather than assumed to be the best case.
+  location_fit text
+    check (location_fit is null or location_fit in ('remote_montreal','onsite_close','onsite_far','not_montreal')),
   model text,
   scored_at timestamptz not null default now()
 );
@@ -148,6 +155,7 @@ alter table job_matches add column if not exists overqualification_risk text;
 alter table job_matches add column if not exists comp_assessment text;
 alter table job_matches add column if not exists ats_keywords_covered text;
 alter table job_matches add column if not exists ats_keywords_missing text;
+alter table job_matches add column if not exists location_fit text;
 create index if not exists job_matches_score_idx on job_matches (score desc);
 
 -- ---------------------------------------------------------------------
@@ -248,6 +256,18 @@ select
   m.ats_keywords_covered,
   m.ats_keywords_missing,
   m.pitch_angle,
+  m.location_fit,
+  -- Sort key, not a display value: lower sorts first. Remote-and-Montreal-
+  -- eligible leads, then close to Côte Saint-Luc, then a real commute but
+  -- still Montreal, matching the priority Robert asked for. Rows scored
+  -- before location_fit existed (null) sort with the lowest included tier
+  -- rather than the best, so stale data never outranks a fresh assessment.
+  case m.location_fit
+    when 'remote_montreal' then 1
+    when 'onsite_close' then 2
+    when 'onsite_far' then 3
+    else 3
+  end as location_priority,
   m.scored_at,
   a.status as app_status,
   (a.cover_letter is not null) as has_cover_letter

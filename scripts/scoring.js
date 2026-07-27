@@ -59,6 +59,12 @@ const ASSESSMENT = {
       description:
         'One sentence: the single strongest angle to lead with in a cover letter for this role.',
     },
+    location_fit: {
+      type: 'string',
+      enum: ['remote_montreal', 'onsite_close', 'onsite_far', 'not_montreal'],
+      description:
+        'Whether and how this candidate could physically work this role from Montreal. See LOCATION FIT in the system prompt for the exact categories.',
+    },
   },
   required: [
     'ref',
@@ -71,6 +77,7 @@ const ASSESSMENT = {
     'ats_keywords_covered',
     'ats_keywords_missing',
     'pitch_angle',
+    'location_fit',
   ],
   additionalProperties: false,
 }
@@ -251,6 +258,17 @@ The candidate's floor is on TOTAL compensation, not base salary. Judge the whole
 
 Format "comp_assessment" as one of above/at/below/unclear, then a colon, then one sentence. Examples: "above: the published 140-165k base plus a stated 20% target bonus and pension puts total well past your floor." / "unclear: no pay disclosed, and nothing in the posting indicates the band."
 
+LOCATION FIT
+
+The candidate lives in Côte Saint-Luc, on the west-central part of the Island of Montreal. This is a hard requirement, separate from the score: classify "location_fit" as exactly one of:
+
+- "remote_montreal" — genuinely fully remote, AND a candidate based in Montreal/Quebec/Canada is eligible. Not this if remote is restricted to another country, another province with no exceptions, or a specific non-Montreal city/region.
+- "onsite_close" — requires physical presence (hybrid or fully on-site) at a location within roughly 10km of Côte Saint-Luc. Treat Côte Saint-Luc itself, NDG, Hampstead, Montreal West, Snowdon, the Town of Mount Royal, Westmount, Saint-Laurent, Lachine, and the West Island suburbs (Dorval, Pointe-Claire, Kirkland, Dollard-des-Ormeaux, Beaconsfield) as close.
+- "onsite_far" — requires physical presence somewhere in the greater Montreal area, but more than roughly 10km from Côte Saint-Luc: downtown Montreal, Old Montreal, the Plateau, Griffintown, Verdun, Rosemont, Hochelaga, and off-island suburbs (Laval, Longueuil, Brossard, Terrebonne, Vaudreuil-Dorion, Repentigny) all count as far, even though they are still commutable.
+- "not_montreal" — no way to do this job from Montreal at all: not remote-eligible, and the office is outside the greater Montreal area entirely.
+
+If the posting doesn't state its location clearly, judge from context (company HQ, named office city). When genuinely unresolvable, prefer "onsite_far" over guessing "close" — the cost of ranking a role slightly too low is much smaller than the cost of ranking an out-of-reach one too high. This field never affects "score" — a role can score 90 for fit and still be "not_montreal"; the two are independent judgments and both must be honest.
+
 APPLICANT-TRACKING KEYWORDS
 
 Most applications are parsed by software that ranks on term overlap with the posting before any person reads them. Extract the terms this posting would screen on and sort them by whether the candidate can actually back them.
@@ -283,8 +301,10 @@ function cleanTerms(value) {
   return terms.length ? terms.join('; ') : null
 }
 
+const LOCATION_FITS = ['remote_montreal', 'onsite_close', 'onsite_far', 'not_montreal']
+
 function parseAssessment(raw, job) {
-  const score = clampScore(raw?.score)
+  let score = clampScore(raw?.score)
   const validTiers = ['exceptional', 'strong', 'possible', 'stretch', 'poor']
   let tier = String(raw?.tier || '').toLowerCase()
   if (!validTiers.includes(tier)) {
@@ -297,17 +317,33 @@ function parseAssessment(raw, job) {
       : score >= 35 ? 'stretch'
       : 'poor'
   }
+
+  const locationFit = LOCATION_FITS.includes(raw?.location_fit) ? raw.location_fit : null
+  let gaps = String(raw?.gaps || '').trim()
+
+  // Not workable from Montreal is a hard exclusion, same treatment as a
+  // deal-breaker caught in prefilterReason: force the row out of the
+  // score >= 35 view instead of letting a strong fit score outrank it.
+  if (locationFit === 'not_montreal') {
+    score = 0
+    tier = 'poor'
+    gaps = [gaps, 'Filtered: no way to do this role from Montreal (not remote-eligible, and the office is outside the greater Montreal area).']
+      .filter(Boolean)
+      .join(' ')
+  }
+
   return {
     posting_id: job.id,
     score,
     tier,
     why_fit: String(raw?.why_fit || '').trim(),
-    gaps: String(raw?.gaps || '').trim(),
+    gaps,
     overqualification_risk: String(raw?.overqualification_risk || '').trim() || null,
     comp_assessment: String(raw?.comp_assessment || '').trim() || null,
     ats_keywords_covered: cleanTerms(raw?.ats_keywords_covered),
     ats_keywords_missing: cleanTerms(raw?.ats_keywords_missing),
     pitch_angle: String(raw?.pitch_angle || '').trim(),
+    location_fit: locationFit,
   }
 }
 
