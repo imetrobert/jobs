@@ -11,8 +11,21 @@ const SENIORITY = [
   { v: 'c_level', l: 'C-level only' },
 ]
 
-// Array columns are edited as comma-separated text — simplest thing that
-// works for lists this short, and it round-trips cleanly.
+// Array columns are edited as comma-separated text.
+//
+// The raw text is held in its own state and only converted to an array on
+// save. Parsing on every keystroke looks equivalent but isn't: trimming each
+// item strips the space the moment you type it, the field re-renders without
+// it, and "VP Digital" comes out as "VPDigital". A controlled input must never
+// round-trip through a lossy transform while the user is still typing.
+const LIST_FIELDS = [
+  'target_titles',
+  'target_industries',
+  'locations',
+  'must_haves',
+  'deal_breakers',
+]
+
 function toList(s) {
   return String(s || '')
     .split(',')
@@ -22,6 +35,7 @@ function toList(s) {
 
 export default function Profile() {
   const [p, setP] = useState(null)
+  const [lists, setLists] = useState({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -31,7 +45,13 @@ export default function Profile() {
       .select('*')
       .eq('id', 1)
       .single()
-      .then(({ data }) => setP(data))
+      .then(({ data }) => {
+        if (!data) return
+        setP(data)
+        setLists(
+          Object.fromEntries(LIST_FIELDS.map(k => [k, (data[k] || []).join(', ')]))
+        )
+      })
   }, [])
 
   if (!p) {
@@ -43,14 +63,21 @@ export default function Profile() {
   }
 
   const set = (k, v) => setP(prev => ({ ...prev, [k]: v }))
+  const setList = (k, v) => setLists(prev => ({ ...prev, [k]: v }))
 
   async function save() {
     setSaving(true)
     setMsg('')
-    const { error } = await supabase
-      .from('job_profile')
-      .update({ ...p, updated_at: new Date().toISOString() })
-      .eq('id', 1)
+    // Convert the list fields here rather than on keystroke. Doing it at save
+    // time also means it doesn't depend on the input losing focus first —
+    // tapping Save straight from the keyboard still captures what's typed.
+    const payload = {
+      ...p,
+      ...Object.fromEntries(LIST_FIELDS.map(k => [k, toList(lists[k])])),
+      updated_at: new Date().toISOString(),
+    }
+    const { error } = await supabase.from('job_profile').update(payload).eq('id', 1)
+    if (!error) setP(payload)
     setMsg(error ? error.message : 'Saved. The next scan will use this.')
     setSaving(false)
   }
@@ -119,8 +146,8 @@ export default function Profile() {
         <label>
           Target titles <span className="muted">— comma separated; these become the search queries</span>
           <input
-            value={(p.target_titles || []).join(', ')}
-            onChange={e => set('target_titles', toList(e.target.value))}
+            value={lists.target_titles ?? ''}
+            onChange={e => setList('target_titles', e.target.value)}
             placeholder="VP Digital, Head of AI, Director of Digital Product"
           />
         </label>
@@ -128,8 +155,8 @@ export default function Profile() {
         <label>
           Target industries <span className="muted">— comma separated</span>
           <input
-            value={(p.target_industries || []).join(', ')}
-            onChange={e => set('target_industries', toList(e.target.value))}
+            value={lists.target_industries ?? ''}
+            onChange={e => setList('target_industries', e.target.value)}
             placeholder="Telecom, Media, SaaS, Financial services"
           />
         </label>
@@ -137,8 +164,8 @@ export default function Profile() {
         <label>
           Locations <span className="muted">— comma separated</span>
           <input
-            value={(p.locations || []).join(', ')}
-            onChange={e => set('locations', toList(e.target.value))}
+            value={lists.locations ?? ''}
+            onChange={e => setList('locations', e.target.value)}
             placeholder="Montreal, Canada remote, North America remote"
           />
         </label>
@@ -232,8 +259,8 @@ export default function Profile() {
         <label>
           Must haves <span className="muted">— comma separated</span>
           <input
-            value={(p.must_haves || []).join(', ')}
-            onChange={e => set('must_haves', toList(e.target.value))}
+            value={lists.must_haves ?? ''}
+            onChange={e => setList('must_haves', e.target.value)}
             placeholder="Executive scope, AI mandate, real budget ownership"
           />
         </label>
@@ -241,8 +268,8 @@ export default function Profile() {
         <label>
           Deal breakers <span className="muted">— comma separated; any match is filtered out before scoring</span>
           <input
-            value={(p.deal_breakers || []).join(', ')}
-            onChange={e => set('deal_breakers', toList(e.target.value))}
+            value={lists.deal_breakers ?? ''}
+            onChange={e => setList('deal_breakers', e.target.value)}
             placeholder="commission only, unpaid, relocation required"
           />
         </label>
