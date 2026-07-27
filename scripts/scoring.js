@@ -65,6 +65,11 @@ const ASSESSMENT = {
       description:
         'Whether and how this candidate could physically work this role from Montreal. See LOCATION FIT in the system prompt for the exact categories.',
     },
+    location_evidence: {
+      type: 'string',
+      description:
+        'ONLY when location_fit is "remote_montreal": the EXACT phrase or sentence quoted verbatim from the posting that states or clearly implies Montreal/Quebec/Canada remote eligibility. Not a paraphrase. Empty string for every other location_fit value. If no such quote genuinely exists in the posting, location_fit must not be "remote_montreal" in the first place.',
+    },
     negotiation_note: {
       type: 'string',
       description:
@@ -88,6 +93,7 @@ const ASSESSMENT = {
     'ats_keywords_missing',
     'pitch_angle',
     'location_fit',
+    'location_evidence',
     'negotiation_note',
     'application_deadline',
   ],
@@ -284,15 +290,17 @@ LOCATION FIT
 
 The candidate lives in Côte Saint-Luc, on the west-central part of the Island of Montreal. This is a hard requirement, separate from the score: classify "location_fit" as exactly one of:
 
-- "remote_montreal" — genuinely fully remote, AND you are CONFIDENT a candidate based in Montreal/Quebec/Canada is eligible. The employer's own office location is irrelevant — a US, European, or fully distributed company is fine as long as a Canadian remote employee is actually permitted. Confidence can come from an explicit statement ("remote — Canada", "remote — North America", "we hire from anywhere") or from the posting simply having no geography-specific hiring language anywhere — no named country, no state list, no domestic-only legal boilerplate. Reserve this tier for a genuine yes, not a shrug.
+- "remote_montreal" — genuinely fully remote, AND the posting contains an ACTUAL SENTENCE OR PHRASE that says or clearly implies a Montreal/Quebec/Canada-based candidate is eligible: "remote — Canada", "remote — North America", "we hire from anywhere", "open to candidates across Canada", and similar. The employer's own office location is irrelevant — a US, European, or fully distributed company is fine as long as THAT PHRASE exists. Silence is NOT enough on its own anymore — a posting that says "Remote" and simply never mentions geography does not qualify here, no matter how good the fit. You must be able to quote the supporting phrase in "location_evidence" (see below); if you cannot find and quote one, do not use this value.
 - "onsite_close" — requires physical presence (hybrid or fully on-site) at a location within roughly 10km of Côte Saint-Luc. Treat Côte Saint-Luc itself, NDG, Hampstead, Montreal West, Snowdon, the Town of Mount Royal, Westmount, Saint-Laurent, Lachine, and the West Island suburbs (Dorval, Pointe-Claire, Kirkland, Dollard-des-Ormeaux, Beaconsfield) as close.
 - "onsite_far" — requires physical presence somewhere in the greater Montreal area, but more than roughly 10km from Côte Saint-Luc: downtown Montreal, Old Montreal, the Plateau, Griffintown, Verdun, Rosemont, Hochelaga, and off-island suburbs (Laval, Longueuil, Brossard, Terrebonne, Vaudreuil-Dorion, Repentigny) all count as far, even though they are still commutable.
-- "remote_unclear" — genuinely remote, but you cannot confidently place it in either "remote_montreal" or "not_montreal". Use this for the middle ground: signals exist but don't add up to a clear yes or a clear no, or the posting is only ambiguously US-leaning (mentions one US city as "location" without saying whether that's a hard requirement or just where the team happens to sit, say). This tier exists so you never have to guess a binary answer you don't actually have evidence for.
-- "not_montreal" — every posting outside Montreal that doesn't explicitly say it accepts remote work from Montreal, Quebec, or Canada generally. This covers BOTH cases: the office is outside the greater Montreal area with no remote option at all, AND the posting is remote but confidently restricted elsewhere. For the latter, watch for tells even when the posting never says "US only" outright: "must be authorized to work in the United States without sponsorship", a requirement to reside in one or more named US states, pay stated only as a US salary band with US-specific benefits (401(k), US federal holidays), EEO/OFCCP/E-Verify boilerplate (US-specific legal language), or references to needing a US Social Security Number or I-9. Silence on geography is NOT this category on its own for a remote posting — that is "remote_montreal" or "remote_unclear" depending on confidence — but a posting whose location is simply a specific non-Montreal city with no remote language anywhere IS "not_montreal", regardless of how strong the fit otherwise is. This tier does not affect "score", which stays the candidate's genuine fit — it only means the role is excluded from the default list and surfaced separately, behind a toggle, precisely so a strong score is never hidden, just not mixed in with roles actually workable from Montreal.
+- "remote_unclear" — genuinely remote, but there is no explicit, quotable statement of Montreal/Quebec/Canada eligibility (so "remote_montreal" is off the table) AND no clear restriction elsewhere either (so "not_montreal" is too strong). This is now the DEFAULT outcome for a plain "Remote" posting that never addresses geography at all — that is the ordinary case, not an edge case, and belongs here rather than being read charitably as a yes. Also covers genuinely mixed signals, like a posting that names one US city as "location" without saying whether that's a hard requirement.
+- "not_montreal" — every posting outside Montreal that doesn't explicitly say it accepts remote work from Montreal, Quebec, or Canada generally. This covers BOTH cases: the office is outside the greater Montreal area with no remote option at all, AND the posting is remote but confidently restricted elsewhere. For the latter, watch for tells even when the posting never says "US only" outright: "must be authorized to work in the United States without sponsorship", a requirement to reside in one or more named US states, pay stated only as a US salary band with US-specific benefits (401(k), US federal holidays), EEO/OFCCP/E-Verify boilerplate (US-specific legal language), or references to needing a US Social Security Number or I-9. A posting whose location is simply a specific non-Montreal city with no remote language anywhere IS "not_montreal", regardless of how strong the fit otherwise is. This tier does not affect "score", which stays the candidate's genuine fit — it only means the role is excluded from the default list and surfaced separately, behind a toggle, precisely so a strong score is never hidden, just not mixed in with roles actually workable from Montreal.
+
+Whenever you use "remote_montreal", fill in "location_evidence" with the EXACT phrase or sentence quoted from the posting that supports it — copy it, do not paraphrase. This is not optional decoration: it exists so a "remote_montreal" claim can be checked against the posting directly instead of trusted blind, and a "remote_montreal" you cannot back with a real quote should not have been used in the first place. Leave "location_evidence" as an empty string for every other location_fit value.
 
 Whenever you use "not_montreal", also consider "negotiation_note": fill it in ONLY when the candidate is such an exceptional or strong match that proactively asking about a remote or hybrid arrangement would be a reasonable move for someone at this level — executive scope where seniority itself often opens a conversation a posting's stated policy wouldn't extend to a typical applicant. Leave it as an empty string for the (much more common) case of a decent-but-unremarkable fit; it exists to flag the standout cases, not to editorialize on every "not_montreal" row.
 
-So for any remote posting, ask two questions in order: (1) is there a clear reason to say no (a real restriction, explicit or implied, or simply a named non-Montreal location with no remote language)? If yes → "not_montreal". (2) If not, is there enough — explicit welcome, or genuine silence with zero geography language — to say yes with real confidence? If yes → "remote_montreal". If neither question resolves cleanly, that is exactly what "remote_unclear" is for: don't force it into whichever of the other two feels safer.
+So for any remote posting, ask two questions in order: (1) is there a clear reason to say no (a real restriction, explicit or implied, or simply a named non-Montreal location with no remote language)? If yes → "not_montreal". (2) Is there an actual quotable phrase saying Montreal/Quebec/Canada is eligible? If yes → "remote_montreal", with that quote in "location_evidence". If neither — including the common case of a posting that just says "Remote" and stops there — → "remote_unclear". Do not let a strong fit score pull you toward "remote_montreal" without the quote to back it; that is exactly the mistake this field exists to prevent.
 
 If a non-remote posting's location isn't stated clearly, judge from context (company HQ, named office city) and prefer "onsite_far" over guessing "close" if it's genuinely unresolvable — the cost of ranking a role slightly too low is much smaller than the cost of ranking an out-of-reach one too high. This field never affects "score" — a role can score 90 for fit and still be "not_montreal" or "remote_unclear"; these are independent judgments and all of them must be honest.
 
@@ -345,8 +353,21 @@ function parseAssessment(raw, job) {
       : 'poor'
   }
 
-  const locationFit = LOCATION_FITS.includes(raw?.location_fit) ? raw.location_fit : null
+  let locationFit = LOCATION_FITS.includes(raw?.location_fit) ? raw.location_fit : null
   let gaps = String(raw?.gaps || '').trim()
+
+  // A "remote_montreal" claim must come with the quote that backs it up —
+  // that quote requirement is the actual enforcement mechanism, not just
+  // the instruction to provide one. Gemini's prompt-following isn't
+  // perfect, and "confident yes, no evidence" is exactly the unsubstantiated
+  // charitable-reading failure this field exists to catch. Downgrading
+  // rather than trusting the label is the same fail-closed posture as the
+  // missing-location_fit case below.
+  let locationEvidence = ''
+  if (locationFit === 'remote_montreal') {
+    locationEvidence = String(raw?.location_evidence || '').trim()
+    if (!locationEvidence) locationFit = 'remote_unclear'
+  }
 
   // "not_montreal" keeps its real score — it's excluded from the default
   // list by a query filter in Jobs.jsx (only shown behind the "worth
@@ -380,6 +401,7 @@ function parseAssessment(raw, job) {
     ats_keywords_missing: cleanTerms(raw?.ats_keywords_missing),
     pitch_angle: String(raw?.pitch_angle || '').trim(),
     location_fit: locationFit,
+    location_evidence: locationFit === 'remote_montreal' ? locationEvidence || null : null,
     negotiation_note:
       locationFit === 'not_montreal' ? String(raw?.negotiation_note || '').trim() || null : null,
     application_deadline: parseDeadline(raw?.application_deadline),

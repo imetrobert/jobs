@@ -153,6 +153,12 @@ create table if not exists job_matches (
   -- real unknown, not a confirmed classification.
   location_fit text
     check (location_fit is null or location_fit in ('remote_montreal','onsite_close','onsite_far','remote_unclear','not_montreal')),
+  -- Populated only when location_fit is 'remote_montreal': the exact quote
+  -- from the posting that the classification rests on, so it can be
+  -- checked against the posting directly rather than trusted blind. A
+  -- 'remote_montreal' row with no evidence gets downgraded to
+  -- 'remote_unclear' before it ever reaches this table (see scoring.js).
+  location_evidence text,
   -- Populated only when location_fit is 'not_montreal' AND the fit is
   -- exceptional/strong enough that proactively asking about a remote or
   -- hybrid arrangement is a reasonable move despite the posting not
@@ -171,6 +177,7 @@ alter table job_matches add column if not exists comp_assessment text;
 alter table job_matches add column if not exists ats_keywords_covered text;
 alter table job_matches add column if not exists ats_keywords_missing text;
 alter table job_matches add column if not exists location_fit text;
+alter table job_matches add column if not exists location_evidence text;
 alter table job_matches add column if not exists negotiation_note text;
 alter table job_matches add column if not exists application_deadline date;
 create index if not exists job_matches_score_idx on job_matches (score desc);
@@ -302,7 +309,8 @@ select
     else 6
   end as location_priority,
   m.negotiation_note,
-  m.application_deadline
+  m.application_deadline,
+  m.location_evidence
 from job_postings p
 left join job_matches m on m.posting_id = p.id
 left join job_applications a on a.posting_id = p.id;

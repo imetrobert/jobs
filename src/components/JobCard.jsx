@@ -155,6 +155,12 @@ export default function JobCard({ job, onChanged }) {
               <p>{job.why_fit}</p>
             </section>
           )}
+          {job.location_fit === 'remote_montreal' && job.location_evidence && (
+            <section>
+              <h4>Where the posting says Montreal/Canada is eligible</h4>
+              <p className="pitch">&ldquo;{job.location_evidence}&rdquo;</p>
+            </section>
+          )}
           {job.gaps && (
             <section>
               <h4>The honest gaps</h4>
