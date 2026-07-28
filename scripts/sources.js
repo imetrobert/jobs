@@ -75,8 +75,16 @@ export async function fetchAdzuna({ token = 'ca', queries, maxPages = 1, env }) 
     throw new Error('ADZUNA_APP_ID / ADZUNA_APP_KEY not set')
   }
   const out = []
+  // Same fail-closed tracking as Jooble below: a per-query failure just
+  // warns and moves on (right for one bad query among many), but if EVERY
+  // query fails the adapter would otherwise return an empty array with no
+  // trace of why — indistinguishable on the Sources page from "ran fine,
+  // no new postings this time."
+  let lastErr = null
+  let attempted = 0
   for (const q of queries) {
     for (let page = 1; page <= maxPages; page++) {
+      attempted++
       // Only documented parameters. `content_type` used to be sent here and is
       // not one — Adzuna spells it `content-type`, and rejects the whole
       // request with a 400 rather than ignoring the unknown key. JSON is the
@@ -95,6 +103,7 @@ export async function fetchAdzuna({ token = 'ca', queries, maxPages = 1, env }) 
         data = await getJSON(url)
       } catch (err) {
         // One bad query shouldn't kill the whole source.
+        lastErr = err
         console.warn(`  adzuna[${token}] "${q}" p${page}: ${err.message}`)
         break
       }
@@ -122,6 +131,9 @@ export async function fetchAdzuna({ token = 'ca', queries, maxPages = 1, env }) 
       if (results.length < 50) break
     }
   }
+  if (out.length === 0 && attempted > 0 && lastErr) {
+    throw new Error(`All ${attempted} Adzuna[${token}] requests failed. Last error: ${lastErr.message}`)
+  }
   return out
 }
 
@@ -133,8 +145,18 @@ export async function fetchJooble({ queries, locations, env }) {
   const { JOOBLE_API_KEY } = env
   if (!JOOBLE_API_KEY) throw new Error('JOOBLE_API_KEY not set')
   const out = []
+  // Every per-query failure below is caught and logged, then the loop just
+  // moves on — right for one bad query among many good ones, wrong if
+  // EVERY query fails (bad key, wrong request shape, Jooble outage): that
+  // silently returns an empty array, which looks identical on the Sources
+  // page to "ran fine, nothing new this time" — last_ok_at still updates,
+  // last_error still clears. Track the last failure and, if nothing at
+  // all came back, surface it as a real error instead.
+  let lastErr = null
+  let attempted = 0
   for (const q of queries) {
     for (const loc of locations.length ? locations : ['']) {
+      attempted++
       let data
       try {
         const res = await fetch(`https://jooble.org/api/${JOOBLE_API_KEY}`, {
@@ -142,9 +164,18 @@ export async function fetchJooble({ queries, locations, env }) {
           headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
           body: JSON.stringify({ keywords: q, location: loc, page: '1' }),
         })
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+        if (!res.ok) {
+          let detail = ''
+          try {
+            detail = (await res.text()).replace(/\s+/g, ' ').trim().slice(0, 300)
+          } catch {
+            /* body already consumed or unreadable */
+          }
+          throw new Error(`${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`)
+        }
         data = await res.json()
       } catch (err) {
+        lastErr = err
         console.warn(`  jooble "${q}" @ "${loc}": ${err.message}`)
         continue
       }
@@ -166,6 +197,9 @@ export async function fetchJooble({ queries, locations, env }) {
         })
       }
     }
+  }
+  if (out.length === 0 && attempted > 0 && lastErr) {
+    throw new Error(`All ${attempted} Jooble requests failed. Last error: ${lastErr.message}`)
   }
   return out
 }
