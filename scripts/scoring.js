@@ -290,7 +290,7 @@ LOCATION FIT
 
 The candidate lives in Côte Saint-Luc, on the west-central part of the Island of Montreal. This is a hard requirement, separate from the score: classify "location_fit" as exactly one of:
 
-- "remote_montreal" — genuinely fully remote, AND the posting contains an ACTUAL SENTENCE OR PHRASE that says or clearly implies a Montreal/Quebec/Canada-based candidate is eligible: "remote — Canada", "remote — North America", "we hire from anywhere", "open to candidates across Canada", and similar. The employer's own office location is irrelevant — a US, European, or fully distributed company is fine as long as THAT PHRASE exists. Silence is NOT enough on its own anymore — a posting that says "Remote" and simply never mentions geography does not qualify here, no matter how good the fit. You must be able to quote the supporting phrase in "location_evidence" (see below); if you cannot find and quote one, do not use this value.
+- "remote_montreal" — genuinely fully remote, AND the posting contains an ACTUAL SENTENCE OR PHRASE that says or clearly implies a Montreal/Quebec/Canada-based candidate is eligible: "remote — Canada", "remote — North America", "we hire from anywhere", "open to candidates across Canada", and similar. The employer's own office location is irrelevant — a US, European, or fully distributed company is fine as long as THAT PHRASE exists. Silence is NOT enough on its own anymore — a posting that says "Remote" and simply never mentions geography does not qualify here, no matter how good the fit. You must be able to quote the supporting phrase in "location_evidence" (see below); if you cannot find and quote one, do not use this value. Watch specifically for a posting that pairs "Canada" remote language with a DIFFERENT specific Canadian city as its own stated location — "Remote (Canada)" next to "Location: Toronto", say. That combination usually means remote work is available FROM that city, not nationwide, and does not cover Montreal; treat it as "remote_unclear", not "remote_montreal", unless the posting separately makes clear any Canadian location is fine.
 - "onsite_close" — requires physical presence (hybrid or fully on-site) at a location within roughly 10km of Côte Saint-Luc. Treat Côte Saint-Luc itself, NDG, Hampstead, Montreal West, Snowdon, the Town of Mount Royal, Westmount, Saint-Laurent, Lachine, and the West Island suburbs (Dorval, Pointe-Claire, Kirkland, Dollard-des-Ormeaux, Beaconsfield) as close.
 - "onsite_far" — requires physical presence somewhere in the greater Montreal area, but more than roughly 10km from Côte Saint-Luc: downtown Montreal, Old Montreal, the Plateau, Griffintown, Verdun, Rosemont, Hochelaga, and off-island suburbs (Laval, Longueuil, Brossard, Terrebonne, Vaudreuil-Dorion, Repentigny) all count as far, even though they are still commutable.
 
@@ -349,6 +349,14 @@ const LOCATION_FITS = ['remote_montreal', 'onsite_close', 'onsite_far', 'remote_
 const MONTREAL_AREA =
   /montr[ée]al|c[ôo]te[- ]saint-luc|\bndg\b|notre-dame-de-gr[âa]ce|hampstead|montreal west|snowdon|mount royal|westmount|saint-laurent|lachine|dorval|pointe-claire|kirkland|dollard-des-ormeaux|beaconsfield|griffintown|verdun|rosemont|hochelaga|\blaval\b|longueuil|brossard|terrebonne|vaudreuil|repentigny/i
 
+// Major Canadian cities that are NOT Montreal. A posting's own location
+// field naming one of these alongside "remote — Canada" language usually
+// means remote work is available FROM that city specifically, not
+// nationwide — code-level check for the same reason MONTREAL_AREA exists:
+// don't trust the model's reading of "Canada" as automatically blanket.
+const OTHER_CANADIAN_CITY =
+  /\btoronto\b|\bcalgary\b|\bvancouver\b|\bottawa\b|\bedmonton\b|\bwinnipeg\b|\bhalifax\b|\bmississauga\b|\bbrampton\b|\bhamilton\b|\bkitchener\b|\bwaterloo\b|\bvictoria\b|\bsaskatoon\b|\bregina\b|st\.?\s*john'?s|\bquebec city\b|\bgatineau\b|\bsurrey\b|\bburnaby\b|\brichmond\s+hill\b|london,?\s*on(tario)?\b/i
+
 function parseAssessment(raw, job) {
   let score = clampScore(raw?.score)
   const validTiers = ['exceptional', 'strong', 'possible', 'stretch', 'poor']
@@ -378,6 +386,20 @@ function parseAssessment(raw, job) {
   if (locationFit === 'remote_montreal') {
     locationEvidence = String(raw?.location_evidence || '').trim()
     if (!locationEvidence) locationFit = 'remote_unclear'
+  }
+
+  // A "remote — Canada" claim is undercut by the posting's own location
+  // field naming a DIFFERENT specific Canadian city — that combination
+  // usually means the remote eligibility is scoped to that city, not
+  // nationwide. Checked in code rather than left to the model's reading,
+  // same reasoning as the quote requirement above.
+  if (
+    locationFit === 'remote_montreal' &&
+    OTHER_CANADIAN_CITY.test(job.location || '') &&
+    !MONTREAL_AREA.test(job.location || '')
+  ) {
+    locationFit = 'remote_unclear'
+    locationEvidence = ''
   }
 
   // Same check for onsite_close/onsite_far: verify against the posting's
