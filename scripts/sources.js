@@ -171,6 +171,49 @@ export async function fetchJooble({ queries, locations, env }) {
 }
 
 // ---------------------------------------------------------------------
+// Remotive — free, public, no API key at all. 100% remote-jobs board, so
+// every posting is remote by definition; `candidate_required_location` is
+// often an explicit eligibility statement ("USA Only", "Canada", "Worldwide"),
+// which is exactly the kind of quotable evidence the Montreal-eligibility
+// scoring looks for. Docs: https://github.com/remotive-com/remote-jobs-api
+// ---------------------------------------------------------------------
+export async function fetchRemotive({ queries, env }) {
+  const out = []
+  const seen = new Set()
+  for (const q of queries) {
+    let data
+    try {
+      data = await getJSON(`https://remotive.com/api/remote-jobs?search=${encodeURIComponent(q)}`)
+    } catch (err) {
+      console.warn(`  remotive "${q}": ${err.message}`)
+      continue
+    }
+    for (const r of data?.jobs || []) {
+      const id = String(r.id)
+      if (seen.has(id)) continue
+      seen.add(id)
+      out.push({
+        source: 'remotive',
+        source_id: id,
+        title: r.title || '',
+        company: r.company_name || null,
+        // The board's own eligibility statement when it states one, not a
+        // physical office — this IS the "Location" field the scorer reads.
+        location: r.candidate_required_location || null,
+        remote: true,
+        url: r.url || null,
+        description: stripHtml(r.description),
+        salary_min: null,
+        salary_max: null,
+        salary_currency: null,
+        posted_at: r.publication_date || null,
+      })
+    }
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------
 // JSearch (OpenWeb Ninja, via RapidAPI) — OPTIONAL, paid beyond a small
 // free tier. This is the one adapter that surfaces LinkedIn/Indeed-sourced
 // rows, because JSearch resells Google-for-Jobs results. Enabled only if
@@ -285,12 +328,67 @@ export async function fetchAshby({ token, label }) {
   }))
 }
 
+// SmartRecruiters — free, public, no key. Docs: developers.smartrecruiters.com.
+// Real customers include Visa, Bosch and Skechers. Unverified from this
+// sandbox (network policy + bot protection blocked every direct test); if
+// the list endpoint doesn't include full description text the way
+// Greenhouse's does, descriptions will just come through thin rather than
+// fail outright — jobAd falls back through a couple of shapes for that reason.
+export async function fetchSmartRecruiters({ token, label }) {
+  const data = await getJSON(
+    `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(token)}/postings?limit=100`
+  )
+  return (data?.content || []).map(j => ({
+    source: `smartrecruiters:${token}`,
+    source_id: String(j.id),
+    title: j.name || '',
+    company: label || j.company?.name || token,
+    location:
+      [j.location?.city, j.location?.region, j.location?.country].filter(Boolean).join(', ') ||
+      null,
+    remote: Boolean(j.location?.remote) || looksRemote(`${j.name} ${j.location?.city}`),
+    url: `https://jobs.smartrecruiters.com/${encodeURIComponent(token)}/${j.id}`,
+    description: stripHtml(
+      j.jobAd?.sections?.jobDescription?.text || j.jobAd?.sections?.qualifications?.text || ''
+    ),
+    salary_min: null,
+    salary_max: null,
+    salary_currency: null,
+    posted_at: j.releasedDate || null,
+  }))
+}
+
+// Workable — free, public widget API, no key. Same unverified-from-here
+// caveat as SmartRecruiters above.
+export async function fetchWorkable({ token, label }) {
+  const data = await getJSON(
+    `https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(token)}?details=true`
+  )
+  return (data?.jobs || []).map(j => ({
+    source: `workable:${token}`,
+    source_id: String(j.shortcode || j.id || j.title),
+    title: j.title || '',
+    company: label || data?.name || token,
+    location: [j.city, j.region, j.country].filter(Boolean).join(', ') || null,
+    remote: Boolean(j.telecommuting) || looksRemote(`${j.title} ${j.city}`),
+    url: j.url || (j.shortcode ? `https://apply.workable.com/${token}/j/${j.shortcode}/` : null),
+    description: stripHtml(j.description),
+    salary_min: null,
+    salary_max: null,
+    salary_currency: null,
+    posted_at: j.published_on || null,
+  }))
+}
+
 export const ADAPTERS = {
   adzuna: fetchAdzuna,
   jooble: fetchJooble,
+  remotive: fetchRemotive,
   jsearch: fetchJSearch,
   greenhouse: fetchGreenhouse,
   lever: fetchLever,
+  smartrecruiters: fetchSmartRecruiters,
+  workable: fetchWorkable,
   ashby: fetchAshby,
 }
 

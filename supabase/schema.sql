@@ -70,7 +70,7 @@ update job_profile
 create table if not exists job_sources (
   id uuid primary key default gen_random_uuid(),
   kind text not null check (kind in
-    ('adzuna','jooble','jsearch','greenhouse','lever','ashby')),
+    ('adzuna','jooble','remotive','jsearch','greenhouse','lever','ashby','smartrecruiters','workable')),
   label text not null,
   token text,
   enabled boolean not null default true,
@@ -329,5 +329,6 @@ insert into job_profile (id) values (1) on conflict (id) do nothing;
 insert into job_sources (kind, label, token) values
   ('adzuna', 'Adzuna (Canada)', 'ca'),
   ('adzuna', 'Adzuna (United States)', 'us'),
-  ('jooble', 'Jooble', null)
+  ('jooble', 'Jooble', null),
+  ('remotive', 'Remotive', null)
 on conflict (kind, token) do nothing;

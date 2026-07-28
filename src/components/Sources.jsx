@@ -6,6 +6,8 @@ const ATS_KINDS = [
   { v: 'greenhouse', l: 'Greenhouse', hint: 'boards.greenhouse.io/<slug>' },
   { v: 'lever', l: 'Lever', hint: 'jobs.lever.co/<slug>' },
   { v: 'ashby', l: 'Ashby', hint: 'jobs.ashbyhq.com/<slug>' },
+  { v: 'smartrecruiters', l: 'SmartRecruiters', hint: 'jobs.smartrecruiters.com/<slug>' },
+  { v: 'workable', l: 'Workable', hint: 'apply.workable.com/<slug>' },
 ]
 
 export default function Sources() {
