@@ -329,55 +329,89 @@ export async function fetchAshby({ token, label }) {
 }
 
 // SmartRecruiters — free, public, no key. Docs: developers.smartrecruiters.com.
-// Real customers include Visa, Bosch and Skechers. Unverified from this
-// sandbox (network policy + bot protection blocked every direct test); if
-// the list endpoint doesn't include full description text the way
-// Greenhouse's does, descriptions will just come through thin rather than
-// fail outright — jobAd falls back through a couple of shapes for that reason.
+// Real customers include Visa, Bosch and Skechers.
+//
+// The list endpoint (verified against a live response) carries only
+// metadata — no description — so each posting needs a second call to the
+// single-posting endpoint for the actual text. That makes this adapter
+// N+1 requests instead of 1, unlike Greenhouse/Lever/Ashby; there's no
+// documented rate limit, and a thin description on one bad detail fetch
+// shouldn't sink the rest of the board, so failures there are per-posting.
 export async function fetchSmartRecruiters({ token, label }) {
-  const data = await getJSON(
+  const list = await getJSON(
     `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(token)}/postings?limit=100`
   )
-  return (data?.content || []).map(j => ({
-    source: `smartrecruiters:${token}`,
-    source_id: String(j.id),
-    title: j.name || '',
-    company: label || j.company?.name || token,
-    location:
-      [j.location?.city, j.location?.region, j.location?.country].filter(Boolean).join(', ') ||
-      null,
-    remote: Boolean(j.location?.remote) || looksRemote(`${j.name} ${j.location?.city}`),
-    url: `https://jobs.smartrecruiters.com/${encodeURIComponent(token)}/${j.id}`,
-    description: stripHtml(
-      j.jobAd?.sections?.jobDescription?.text || j.jobAd?.sections?.qualifications?.text || ''
-    ),
-    salary_min: null,
-    salary_max: null,
-    salary_currency: null,
-    posted_at: j.releasedDate || null,
-  }))
+  const out = []
+  for (const j of list?.content || []) {
+    let desc = ''
+    try {
+      const detail = await getJSON(
+        `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(token)}/postings/${encodeURIComponent(j.id)}`
+      )
+      desc = detail?.jobAd?.sections?.jobDescription?.text || ''
+    } catch (err) {
+      console.warn(`  smartrecruiters:${token} #${j.id} detail: ${err.message}`)
+    }
+    out.push({
+      source: `smartrecruiters:${token}`,
+      source_id: String(j.id),
+      title: j.name || '',
+      company: label || j.company?.name || token,
+      location:
+        [j.location?.city, j.location?.region, j.location?.country].filter(Boolean).join(', ') ||
+        null,
+      remote: Boolean(j.location?.remote) || looksRemote(`${j.name} ${j.location?.city}`),
+      url: `https://jobs.smartrecruiters.com/${encodeURIComponent(label || token)}/${j.id}`,
+      description: stripHtml(desc),
+      salary_min: null,
+      salary_max: null,
+      salary_currency: null,
+      posted_at: j.releasedDate || null,
+    })
+  }
+  return out
 }
 
-// Workable — free, public widget API, no key. Same unverified-from-here
-// caveat as SmartRecruiters above.
+// Workable — free, public widget API, no key.
+//
+// Same shape as SmartRecruiters above: the list endpoint (verified) has no
+// description even with details=true, so each job needs a second call to
+// its own endpoint for the real text.
 export async function fetchWorkable({ token, label }) {
-  const data = await getJSON(
+  const list = await getJSON(
     `https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(token)}?details=true`
   )
-  return (data?.jobs || []).map(j => ({
-    source: `workable:${token}`,
-    source_id: String(j.shortcode || j.id || j.title),
-    title: j.title || '',
-    company: label || data?.name || token,
-    location: [j.city, j.region, j.country].filter(Boolean).join(', ') || null,
-    remote: Boolean(j.telecommuting) || looksRemote(`${j.title} ${j.city}`),
-    url: j.url || (j.shortcode ? `https://apply.workable.com/${token}/j/${j.shortcode}/` : null),
-    description: stripHtml(j.description),
-    salary_min: null,
-    salary_max: null,
-    salary_currency: null,
-    posted_at: j.published_on || null,
-  }))
+  const out = []
+  for (const j of list?.jobs || []) {
+    let desc = ''
+    if (j.shortcode) {
+      try {
+        const detail = await getJSON(
+          `https://apply.workable.com/api/v1/widget/accounts/${encodeURIComponent(token)}/jobs/${encodeURIComponent(j.shortcode)}`
+        )
+        desc = [detail?.description, detail?.requirements, detail?.benefits]
+          .filter(Boolean)
+          .join('\n\n')
+      } catch (err) {
+        console.warn(`  workable:${token} #${j.shortcode} detail: ${err.message}`)
+      }
+    }
+    out.push({
+      source: `workable:${token}`,
+      source_id: String(j.shortcode || j.title),
+      title: j.title || '',
+      company: label || list?.name || token,
+      location: [j.city, j.state || j.region, j.country].filter(Boolean).join(', ') || null,
+      remote: Boolean(j.telecommuting) || looksRemote(`${j.title} ${j.city}`),
+      url: j.url || (j.shortcode ? `https://apply.workable.com/${token}/j/${j.shortcode}/` : null),
+      description: stripHtml(desc),
+      salary_min: null,
+      salary_max: null,
+      salary_currency: null,
+      posted_at: j.published_on || null,
+    })
+  }
+  return out
 }
 
 export const ADAPTERS = {
