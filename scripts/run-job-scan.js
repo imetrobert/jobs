@@ -37,10 +37,11 @@ const MAX_SCORES_PER_RUN = Number(process.env.MAX_SCORES_PER_RUN || 120)
 // the UI) rather than deleted — you may have already applied against them.
 // None of the source APIs expose a "still accepting applications" flag, so
 // this absence-from-every-feed signal is the only general-purpose one
-// available; 45 days was generous enough to leave clearly-dead postings
-// visible for a month and a half. 14 gives a fair reappearance window
-// (feeds aren't always re-crawled daily) without lingering nearly that long.
-const STALE_AFTER_DAYS = 14
+// available. 7 days is a deliberate middle ground: long enough to absorb a
+// feed having an off run or a pagination gap without a still-open posting
+// flickering out, short enough that "not shown" tracks "probably gone"
+// within about a week rather than lingering.
+const STALE_AFTER_DAYS = 7
 
 // ---------- helpers ----------
 
