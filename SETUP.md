@@ -17,6 +17,7 @@ job-scan.yml runs
     ├── Normalizes → dedupes (same role across 3 feeds = 1 row)
     ├── Prefilters out obvious misses (wrong level, deal-breakers)
     ├── Scores the rest with Claude or Gemini → score, why it fits, gaps, pitch angle
+    ├── Opens the link of everything it's about to show and drops the closed ones
     └── Writes to Supabase
     │
     ▼
@@ -359,6 +360,50 @@ Screening risk asks "will you get the call?" Compensation asks "is it worth
 taking?" Collapsing them into one number would hide whichever one you most need
 to see.
 
+### Dead postings, and why the list used to be full of them
+
+The most annoying failure this app had was clicking a good match and getting
+*"The job position is no longer available"*. That is not a scoring problem — it
+is what aggregators do. Jooble, Adzuna and JSearch keep a closed role in their
+index for weeks after the employer took it down, so the posting is genuinely
+returned by the feed on every scan, `last_seen_at` keeps refreshing, and the
+"stopped appearing anywhere" staleness rule never fires. None of the feed APIs
+expose a "still open" flag.
+
+The only ground truth is the posting page itself, so the scan now opens it.
+After scoring, it fetches the URL of every posting that scored high enough to
+be shown and reads the answer off the response — a `404`/`410`, an expiry
+banner ("no longer available", "this position has been filled", "cette offre
+n'est plus disponible"), or a redirect off the posting onto a search page.
+Confirmed-closed roles are marked stale and disappear from the list before you
+ever click them. The Matches header reports the count: *"…, 150 links checked
+(12 already closed, dropped)"*.
+
+Two design decisions worth knowing about:
+
+- **It fails open.** There are three outcomes, not two: `live`, `dead`, and
+  `unknown`. A bot wall, a timeout, a captcha, a 5xx or Adzuna's regional block
+  all produce `unknown`, and an `unknown` posting **stays in the list** with an
+  amber caveat on the card saying what happened. Hiding a real job you would
+  have applied to is a worse error than showing one dead link, so only positive
+  evidence of closure hides anything.
+- **Where several feeds carry the same role, the link now points at the most
+  authoritative copy.** A company's own Greenhouse/Lever/Ashby page *is* the
+  posting and 404s the moment it closes; an aggregator's page is a record of
+  one and outlives it. Previously the kept URL was whichever feed happened to
+  be listed first in the Sources table, which was effectively random. This
+  costs nothing and fixes a good share of the problem on its own.
+
+A posting confirmed dead stays hidden even though the aggregator keeps
+re-listing it — but only while the URL is unchanged. If a later scan finds the
+same role at a better link, the old verdict is cleared and it gets re-checked.
+
+The checks are plain page loads: no API key, no quota, nothing to pay for. They
+are the slowest part of a scan, so `MAX_LINK_CHECKS_PER_RUN` (default 150)
+caps them, spending the budget on the highest-scoring roles first. Anything
+verified in the last `LINK_RECHECK_HOURS` (default 20) at the same URL is
+skipped. Set `MAX_LINK_CHECKS_PER_RUN=0` to turn the whole pass off.
+
 ### Screening risk is not the same as fit
 
 This is a deliberately separate field, and it's the one most worth paying
@@ -488,6 +533,22 @@ locations first; it's the most common cause.
 Sources. Aggregator coverage of senior roles is genuinely patchy; company boards
 are not.
 
+**A card says "Couldn't confirm this one is still open"** — the link check ran
+and could not read the page: usually the site refuses automated requests, or it
+renders entirely in the browser. It is a caveat, not a verdict; the role is
+probably fine. Open the link before drafting anything.
+
+**A posting you clicked is still dead** — the check only catches sites that say
+so. A page that returns a normal-looking 200 with no expiry wording is
+indistinguishable from a live one. If a particular board does this with
+consistent wording, add the phrase to `DEAD_PATTERNS` in
+`scripts/verify-links.js`; keep it literal, since every pattern there can hide a
+real job.
+
+**The scan step got noticeably slower** — that's the link checks, which are
+network-bound rather than CPU-bound. Lower `MAX_LINK_CHECKS_PER_RUN`, or raise
+`LINK_CHECK_CONCURRENCY` (default 6; same-host requests stay paced regardless).
+
 ---
 
 ## Layout
@@ -496,9 +557,10 @@ are not.
 jobs-app/
 ├── src/                          React app (login, ranked list, profile, pipeline, sources)
 ├── scripts/
-│   ├── run-job-scan.js           orchestrator: fetch → dedupe → prefilter → score → persist
+│   ├── run-job-scan.js           orchestrator: fetch → dedupe → prefilter → score → verify → persist
 │   ├── sources.js                one adapter per feed; add new feeds here
 │   ├── scoring.js                the scoring prompt, schema, and prefilter
+│   ├── verify-links.js           opens each posting URL; live / dead / unknown
 │   └── llm.js                    Claude / Gemini switch
 ├── supabase/
 │   ├── schema.sql                job_* tables, RLS, the job_ranked view

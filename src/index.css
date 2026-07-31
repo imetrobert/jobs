@@ -352,6 +352,12 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .job-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
 .job-actions select { width: auto; }
 
+/* Result of actually opening the posting URL during the last scan. Quiet by
+   design — this is a footnote on a link, not a verdict on the role. */
+.link-note { margin: 10px 0 0; padding-left: 10px; border-left: 3px solid var(--line); }
+.link-note.ok { border-left-color: var(--good); }
+.link-note.warn { border-left-color: var(--warn); }
+
 .docs { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 6px; }
 .doc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .docs-toggle {
