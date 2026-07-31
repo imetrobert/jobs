@@ -426,8 +426,23 @@ That default lives in exactly one place: the `max_link_checks` input default in
 inherits the same number, and so does the monthly cron. Change it there and
 every path changes with it.
 
-**What the caveats on a card mean.** Only a *confirmed* close hides a posting,
-so anything still in the list is one of three things, and the card says which:
+**Triage from the list, without opening anything.** Every card carries a pill in
+its tag row, first in the row, so the list can be scanned for the roles that are
+certainly still open before any time goes into reading them:
+
+| Pill | Meaning |
+|---|---|
+| **✓ Verified** (green) | The posting page was open when the scan last checked it. |
+| **Unverified** (amber) | The check ran and couldn't reach a verdict. Hover for why. |
+| **Not checked** (grey) | Never checked — the run hit its budget first. |
+
+There is no pill for "closed": those are hidden from the list outright. Every
+row gets one of the three, including the plain unchecked case, since an absent
+badge would read as reassurance.
+
+**What the caveats on a card mean.** Expanding a card spells out the same
+verdict in full. Only a *confirmed* close hides a posting, so anything still in
+the list is one of three things:
 
 | Card says | Meaning |
 |---|---|

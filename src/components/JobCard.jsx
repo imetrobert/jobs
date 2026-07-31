@@ -108,6 +108,32 @@ function linkCaveat(job) {
     : 'Could not confirm this is still open.'
 }
 
+// The same verdict as the caveat below, compressed to a pill for the collapsed
+// card — so the list can be triaged on "is this posting definitely still up?"
+// without opening anything. 'dead' is deliberately absent: those are hidden
+// from the list entirely and can never reach a card.
+//
+// Every row gets one, including the plain "not checked" case. An absent badge
+// would read as reassurance, which is the exact ambiguity this is here to end.
+function linkBadge(job) {
+  switch (job.link_status) {
+    case 'live':
+      return {
+        cls: 'link-live',
+        label: '✓ Verified',
+        title: `The posting page was open when the scan checked it ${checkedAgo(job.link_checked_at)}.`,
+      }
+    case 'unknown':
+      return { cls: 'link-unknown', label: 'Unverified', title: linkCaveat(job) }
+    default:
+      return {
+        cls: 'link-unchecked',
+        label: 'Not checked',
+        title: "This link hasn't been checked, so there's no telling whether the role is still open.",
+      }
+  }
+}
+
 function slug(s) {
   return String(s || 'role').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
 }
@@ -163,6 +189,7 @@ export default function JobCard({ job, onChanged }) {
   }
 
   const pay = money(job)
+  const link = linkBadge(job)
 
   return (
     <article className={`job ${open ? 'open' : ''}`}>
@@ -180,6 +207,10 @@ export default function JobCard({ job, onChanged }) {
             </span>
           </span>
           <span className="job-tags">
+            {/* First in the row on purpose: "is this posting actually still
+                up?" is the question worth answering before any of the others,
+                since a dead link makes the rest of the card moot. */}
+            <span className={`tag ${link.cls}`} title={link.title}>{link.label}</span>
             {job.app_status && job.app_status !== 'interested' && (
               <span className="tag status">{job.app_status}</span>
             )}
