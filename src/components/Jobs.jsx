@@ -69,6 +69,14 @@ export default function Jobs({ session }) {
       // plain .neq() would silently drop every untracked row too, since SQL
       // treats "null <> value" as unknown rather than true.
       .or('app_status.is.null,app_status.not.in.(rejected,passed)')
+      // Belt and braces on dead links. The scan marks a posting stale the
+      // moment it confirms the page says the role is closed, so `stale` above
+      // already excludes these — but that coupling is easy to break, and a
+      // posting we have positively confirmed is gone should never reach the
+      // list on the strength of one filter. Null (never checked) and
+      // 'unknown' (couldn't tell) both pass: only a confirmed close hides
+      // anything.
+      .or('link_status.is.null,link_status.neq.dead')
       // Location first: remote-and-Montreal-eligible, then close to Côte
       // Saint-Luc, then a real commute but still Montreal. Fit score only
       // breaks ties within the same location tier.
@@ -170,7 +178,9 @@ export default function Jobs({ session }) {
           {!refreshing && lastRun?.status === 'ok' && (
             <>
               <span className="done-check">✓ Done</span> — {doneAt(lastRun.finished_at || lastRun.started_at)},{' '}
-              {lastRun.scored} roles scored, {lastRun.fetched} postings seen.
+              {lastRun.scored} roles scored, {lastRun.fetched} postings seen
+              {lastRun.links_checked > 0 && `, ${lastRun.links_checked} links checked`}
+              {lastRun.links_dead > 0 && ` (${lastRun.links_dead} already closed, dropped)`}.
             </>
           )}
         </p>

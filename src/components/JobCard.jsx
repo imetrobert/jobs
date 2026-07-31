@@ -64,6 +64,17 @@ function locationLabel(fit) {
   }
 }
 
+// How long ago the scan last confirmed the posting page still loads. Recency
+// is the whole point of the claim, so it is always stated alongside it.
+function checkedAgo(iso) {
+  if (!iso) return null
+  const hours = Math.floor((Date.now() - new Date(iso).getTime()) / 3600_000)
+  if (hours < 1) return 'just now'
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  return days === 1 ? 'yesterday' : `${days} days ago`
+}
+
 function slug(s) {
   return String(s || 'role').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
 }
@@ -266,6 +277,24 @@ export default function JobCard({ job, onChanged }) {
               ))}
             </select>
           </div>
+
+          {/* Whether the link was actually opened and found alive, stated
+              before you spend time on the role rather than after. Confirmed-
+              closed postings never get this far — the scan hides them — so
+              the only two cases here are "checked, fine" and "couldn't
+              tell", and the second one says why. */}
+          {job.link_status === 'live' && job.link_checked_at && (
+            <p className="muted sm link-note ok">
+              Posting page still open when checked {checkedAgo(job.link_checked_at)}.
+            </p>
+          )}
+          {job.link_status === 'unknown' && (
+            <p className="muted sm link-note warn">
+              Couldn&apos;t confirm this one is still open
+              {job.link_note ? ` — ${job.link_note}` : ''}. It may well be; the check just
+              couldn&apos;t read the page. Worth opening the link before you draft anything.
+            </p>
+          )}
 
           {err && <div className="err">{err}</div>}
 

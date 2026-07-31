@@ -30,6 +30,14 @@ never inserted into a document, and no hidden-text or keyword-stuffing tricks ar
 generated. A recurring-gaps panel aggregates the misses across every scored role,
 which is the useful input for rewriting a LinkedIn profile.
 
+**Checks the link before you do.** Aggregators keep listing roles for weeks after
+the employer closed them, which is why a good match so often opened on "this job
+is no longer available". Every posting about to be shown gets its page fetched
+and read; confirmed-closed roles are dropped, and where several feeds carry the
+same job the card links to the company's own ATS page rather than an aggregator's
+copy of it. A page that can't be read is flagged, never hidden — the check fails
+open, because hiding a real job is the worse mistake.
+
 **Scores fit and screening risk separately.** A long, senior career helps the fit
 score and never counts against it — but it's a real filter risk with hiring teams,
 so that's reported as its own rated field rather than hidden inside the number.

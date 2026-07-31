@@ -18,6 +18,7 @@ import { createClient } from '@supabase/supabase-js'
 import { ADAPTERS } from './sources.js'
 import { prefilterReason, scoreJobBatch, BATCH_SIZE } from './scoring.js'
 import { activeProvider, QuotaExhaustedError, GEMINI_RPM } from './llm.js'
+import { verifyLinks } from './verify-links.js'
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -41,7 +42,52 @@ const MAX_SCORES_PER_RUN = Number(process.env.MAX_SCORES_PER_RUN || 120)
 // feed having an off run or a pagination gap without a still-open posting
 // flickering out, short enough that "not shown" tracks "probably gone"
 // within about a week rather than lingering.
+//
+// It is also, on its own, far too weak. Aggregators keep returning roles the
+// employer closed weeks ago, so those rows are re-seen every single scan and
+// never age out — which is why the link-verification pass below exists.
 const STALE_AFTER_DAYS = 7
+
+// ---- link verification tuning ----
+// Cap on how many posting URLs one run will fetch. These are ordinary page
+// loads, not API calls against a quota, but they are the slowest part of a
+// scan, so the budget goes to the postings you are actually likely to click.
+const MAX_LINK_CHECKS_PER_RUN = Number(process.env.MAX_LINK_CHECKS_PER_RUN || 150)
+// Don't spend the budget re-checking a posting that was verified recently and
+// whose URL hasn't changed since. Slightly under a day so a daily scan
+// re-checks everything it shows.
+const LINK_RECHECK_HOURS = Number(process.env.LINK_RECHECK_HOURS || 20)
+// Only verify what clears the same score bar the Jobs page uses. A posting
+// nobody will ever see is not worth a request.
+const LINK_CHECK_MIN_SCORE = Number(process.env.LINK_CHECK_MIN_SCORE || 35)
+const LINK_CHECK_CONCURRENCY = Number(process.env.LINK_CHECK_CONCURRENCY || 6)
+
+// How far a URL from a given feed can be trusted to still resolve to the real
+// posting. The company's own ATS page IS the posting; an aggregator's copy is
+// a record of one, and keeps resolving to a dead end (or silently bouncing to
+// a search page) for weeks after the role closed. When the same job arrives
+// from several feeds, link to the most authoritative copy — the single
+// cheapest reduction in "no longer available" clicks available here, since it
+// costs nothing and applies to every syndicated row.
+const URL_RANK = {
+  greenhouse: 5,
+  lever: 5,
+  ashby: 5,
+  smartrecruiters: 5,
+  workable: 5,
+  // Curated, small, and prunes closed roles reasonably promptly.
+  remotive: 3,
+  // Big aggregators: links usually resolve, but to their own listing page,
+  // which outlives the posting behind it.
+  adzuna: 2,
+  jsearch: 2,
+  // Worst offender in practice — this is the one in the bug report.
+  jooble: 1,
+}
+
+function urlRank(source) {
+  return URL_RANK[String(source || '').split(':')[0]] ?? 0
+}
 
 // ---------- helpers ----------
 
@@ -85,6 +131,115 @@ function buildLocations(profile) {
   return (profile.locations || []).filter(Boolean).slice(0, 4)
 }
 
+// ---------- link verification ----------
+
+/**
+ * Fetch the URL of every posting that would actually be shown, and hide the
+ * ones whose page says the role is closed.
+ *
+ * Only a confirmed 'dead' hides anything. A page that refused the request, a
+ * timeout, a region block — all 'unknown', all left visible with a caveat on
+ * the card, because hiding a live posting is a worse failure than showing a
+ * dead one. Never throws: a link check going wrong must not fail a scan whose
+ * fetching and scoring already succeeded.
+ */
+async function verifyPostingLinks(db, stats) {
+  if (MAX_LINK_CHECKS_PER_RUN <= 0) {
+    console.log('Link check disabled (MAX_LINK_CHECKS_PER_RUN=0).')
+    return
+  }
+  const { data: postings, error } = await db
+    .from('job_postings')
+    .select('id, title, company, url, link_checked_at, link_checked_url')
+    .eq('stale', false)
+    .not('url', 'is', null)
+  if (error) {
+    console.warn(`Link check skipped — could not list postings: ${error.message}`)
+    return
+  }
+
+  const { data: matchRows, error: matchErr } = await db.from('job_matches').select('posting_id, score')
+  if (matchErr) {
+    console.warn(`Link check skipped — could not list scores: ${matchErr.message}`)
+    return
+  }
+  const scoreById = new Map((matchRows || []).map(m => [m.posting_id, m.score]))
+
+  const freshCutoff = Date.now() - LINK_RECHECK_HOURS * 3600_000
+  const candidates = postings
+    // Unscored postings, and ones scoring below what the Jobs page shows,
+    // are never clicked — checking them would spend the budget on rows
+    // nobody sees.
+    .filter(p => (scoreById.get(p.id) ?? -1) >= LINK_CHECK_MIN_SCORE)
+    .filter(p => {
+      // A verdict about a different URL is not a verdict about this one.
+      if (!p.link_checked_at || p.link_checked_url !== p.url) return true
+      return new Date(p.link_checked_at).getTime() < freshCutoff
+    })
+    // Best matches first, so if the cap bites it bites the roles you were
+    // least likely to open.
+    .sort((a, b) => (scoreById.get(b.id) ?? 0) - (scoreById.get(a.id) ?? 0))
+    .slice(0, MAX_LINK_CHECKS_PER_RUN)
+
+  if (!candidates.length) {
+    console.log('Link check: every shown posting was verified recently.')
+    return
+  }
+
+  console.log(`Checking ${candidates.length} posting links (${LINK_CHECK_CONCURRENCY} at a time)…`)
+  let results
+  try {
+    results = await verifyLinks(candidates, {
+      concurrency: LINK_CHECK_CONCURRENCY,
+      onResult: (p, r) => {
+        // Only the interesting outcomes — a run that verifies 150 live links
+        // should not print 150 lines saying so.
+        if (r.status !== 'live') {
+          console.log(`  ${r.status.padEnd(7)} ${p.title} @ ${p.company || '?'} — ${r.note}`)
+        }
+      },
+    })
+  } catch (err) {
+    console.warn(`Link check failed: ${err.message}`)
+    return
+  }
+
+  const checkedAt = new Date().toISOString()
+  let written = 0
+  for (let i = 0; i < results.length; i += 20) {
+    const chunk = results.slice(i, i + 20)
+    const settled = await Promise.all(
+      chunk.map(({ posting, status, note }) =>
+        db
+          .from('job_postings')
+          .update({
+            link_status: status,
+            link_note: note,
+            link_checked_at: checkedAt,
+            link_checked_url: posting.url,
+            // Confirmed closed — hide it the same way an aged-out posting is
+            // hidden, rather than deleting a row you may have applied against.
+            ...(status === 'dead' ? { stale: true } : {}),
+          })
+          .eq('id', posting.id)
+      )
+    )
+    for (const { error: upErr } of settled) {
+      if (upErr) console.warn(`  could not save a link verdict: ${upErr.message}`)
+      else written++
+    }
+  }
+
+  const dead = results.filter(r => r.status === 'dead').length
+  const unknown = results.filter(r => r.status === 'unknown').length
+  stats.links_checked = written
+  stats.links_dead = dead
+  console.log(
+    `Link check: ${results.length - dead - unknown} live, ${dead} closed (hidden), ` +
+      `${unknown} could not be verified (still shown, with a caveat).`
+  )
+}
+
 // ---------- main ----------
 
 async function main() {
@@ -96,7 +251,7 @@ async function main() {
     .single()
   if (runErr) throw new Error(`Could not open run log: ${runErr.message}`)
 
-  const stats = { fetched: 0, new_postings: 0, scored: 0 }
+  const stats = { fetched: 0, new_postings: 0, scored: 0, links_checked: 0, links_dead: 0 }
   let quotaStopped = false
   let scoringError = null
 
@@ -158,7 +313,14 @@ async function main() {
       const fp = fingerprint(job)
       const existing = byPrint.get(fp)
       if (!existing) {
-        byPrint.set(fp, { ...job, fingerprint: fp, source_ids: { [job.source]: job.source_id } })
+        byPrint.set(fp, {
+          ...job,
+          fingerprint: fp,
+          source_ids: { [job.source]: job.source_id },
+          // Which feed the kept URL came from — not necessarily the feed the
+          // rest of the row came from, once a better link wins below.
+          url_source: job.url ? job.source : null,
+        })
         continue
       }
       // Same role from a second feed: keep the richest description and record
@@ -167,7 +329,14 @@ async function main() {
       if ((job.description || '').length > (existing.description || '').length) {
         existing.description = job.description
       }
-      existing.url = existing.url || job.url
+      // Link to the most authoritative copy, not merely the first one seen.
+      // Feed order is whatever order the sources table happens to be in, so
+      // "first wins" was effectively picking the link at random — and an
+      // aggregator's link is markedly more likely to outlive the posting.
+      if (job.url && (!existing.url || urlRank(job.source) > urlRank(existing.url_source))) {
+        existing.url = job.url
+        existing.url_source = job.source
+      }
       // Prefer a genuinely published figure over an aggregator's estimate,
       // even when the estimate arrived first.
       if (
@@ -188,7 +357,11 @@ async function main() {
     const now = new Date().toISOString()
     const rows = unique.map(j => ({
       fingerprint: j.fingerprint,
-      source: j.source,
+      // Follows the URL, not the first feed that happened to return the role:
+      // the UI reads this to explain where the link goes (and to offer the
+      // Adzuna fallback search), so it has to describe the link that's
+      // actually on the card. source_ids keeps the full record of every feed.
+      source: j.url_source || j.source,
       source_ids: j.source_ids,
       title: j.title.trim(),
       company: j.company || null,
@@ -211,6 +384,45 @@ async function main() {
         .from('job_postings')
         .upsert(chunk, { onConflict: 'fingerprint', ignoreDuplicates: false })
       if (error) throw new Error(`Upsert failed: ${error.message}`)
+    }
+
+    // ---- re-apply verdicts the upsert just cleared ----
+    // Every row above was written with stale=false, which is correct for the
+    // "stopped appearing in the feeds" signal: it was in a feed, so it is not
+    // absent. It is wrong for a posting whose page we have already fetched and
+    // found closed — aggregators re-list those for weeks, so without this they
+    // would resurface at full score on every single scan.
+    //
+    // The verdict only holds while the URL is unchanged. If a later scan found
+    // the same role at a better link (an ATS page replacing an aggregator's),
+    // the old verdict says nothing about the new URL, so it is cleared and the
+    // row is re-checked below.
+    const { data: deadRows, error: deadErr } = await db
+      .from('job_postings')
+      .select('id, url, link_checked_url')
+      .eq('link_status', 'dead')
+    if (deadErr) {
+      console.warn(`Could not re-apply confirmed-dead links: ${deadErr.message}`)
+    } else if (deadRows.length) {
+      const sameUrl = deadRows.filter(r => r.url && r.url === r.link_checked_url).map(r => r.id)
+      const newUrl = deadRows.filter(r => !r.url || r.url !== r.link_checked_url).map(r => r.id)
+      if (sameUrl.length) {
+        const { error } = await db
+          .from('job_postings')
+          .update({ stale: true })
+          .in('id', sameUrl)
+          .eq('stale', false)
+        if (error) console.warn(`Could not keep dead links hidden: ${error.message}`)
+      }
+      if (newUrl.length) {
+        const { error } = await db
+          .from('job_postings')
+          .update({ link_status: null, link_note: null })
+          .in('id', newUrl)
+        if (error) console.warn(`Could not reset link status on relinked postings: ${error.message}`)
+      }
+      console.log(`Confirmed-dead links kept hidden: ${sameUrl.length}` +
+        (newUrl.length ? ` (${newUrl.length} relinked, will be re-checked)` : ''))
     }
 
     // ---- find what still needs scoring ----
@@ -325,6 +537,13 @@ async function main() {
       )
     }
 
+    // ---- verify the links actually still lead to an open posting ----
+    // The one check that catches what every other signal here misses: a role
+    // still sitting in an aggregator's index, freshly re-seen this run, that
+    // the employer closed a fortnight ago. Runs after scoring so the budget
+    // can be spent on the postings that scored well enough to be shown.
+    await verifyPostingLinks(db, stats)
+
     // ---- age out postings that stopped appearing ----
     const cutoff = new Date(Date.now() - STALE_AFTER_DAYS * 86400_000).toISOString()
     const { error: staleErr } = await db
@@ -360,7 +579,10 @@ async function main() {
       .update({ status: 'ok', ...stats, finished_at: new Date().toISOString() })
       .eq('id', run.id)
 
-    console.log(`\nDone. fetched=${stats.fetched} new=${stats.new_postings} scored=${stats.scored}`)
+    console.log(
+      `\nDone. fetched=${stats.fetched} new=${stats.new_postings} scored=${stats.scored} ` +
+        `links_checked=${stats.links_checked} links_dead=${stats.links_dead}`
+    )
     if (quotaStopped) {
       console.log('Stopped early on the daily LLM quota — the remainder is scored on the next run.')
     }

@@ -108,10 +108,47 @@ create table if not exists job_postings (
   last_seen_at timestamptz not null default now(),
   -- Set when a posting stops appearing in feeds, so the UI can grey it out
   -- rather than deleting history you may have already applied against.
-  stale boolean not null default false
+  stale boolean not null default false,
+  -- Result of actually fetching `url` and reading the page (see
+  -- scripts/verify-links.js). Aggregators keep syndicating roles the employer
+  -- already closed, so "still in the feed" is not evidence the posting is
+  -- open — this is. Three values, never two:
+  --   'live'    the page loaded and says nothing about being closed
+  --   'dead'    the page or its status code says the posting is gone
+  --   'unknown' could not tell (bot wall, timeout, region block, 5xx)
+  -- null means never checked. Only 'dead' hides a posting; 'unknown' is
+  -- surfaced as a caveat, because hiding a real job is the worse error.
+  link_status text
+    check (link_status is null or link_status in ('live','dead','unknown')),
+  link_checked_at timestamptz,
+  -- The URL the verdict above applies to. When a later scan finds the same
+  -- role at a different URL (an ATS link replacing an aggregator's, say) the
+  -- old verdict no longer means anything and the row is re-checked.
+  link_checked_url text,
+  -- Human-readable reason, e.g. the exact sentence the page used to say the
+  -- posting had closed. Shown in the UI for 'unknown' so a caveat can say
+  -- what actually happened rather than just "unverified".
+  link_note text
 );
 create index if not exists job_postings_posted_idx on job_postings (posted_at desc);
 create index if not exists job_postings_stale_idx on job_postings (stale);
+create index if not exists job_postings_link_status_idx on job_postings (link_status);
+
+-- Migrations for installs created before link verification existed.
+alter table job_postings add column if not exists link_status text;
+alter table job_postings add column if not exists link_checked_at timestamptz;
+alter table job_postings add column if not exists link_checked_url text;
+alter table job_postings add column if not exists link_note text;
+-- Same name Postgres generates for the inline check above, so a fresh install
+-- (which already has it) hits duplicate_object and skips, while an install
+-- that predates the column gets the constraint added.
+do $$
+begin
+  alter table job_postings add constraint job_postings_link_status_check
+    check (link_status is null or link_status in ('live','dead','unknown'));
+exception
+  when duplicate_object then null;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Matches: the LLM's verdict on one posting against the profile.
@@ -206,11 +243,18 @@ create table if not exists job_runs (
   fetched int not null default 0,
   new_postings int not null default 0,
   scored int not null default 0,
+  -- How many posting URLs this run actually fetched to confirm the role is
+  -- still open, and how many of those turned out to be closed and were
+  -- pulled from the list before you could click them.
+  links_checked int not null default 0,
+  links_dead int not null default 0,
   error text,
   started_at timestamptz not null default now(),
   finished_at timestamptz
 );
 create index if not exists job_runs_started_idx on job_runs (started_at desc);
+alter table job_runs add column if not exists links_checked int not null default 0;
+alter table job_runs add column if not exists links_dead int not null default 0;
 
 -- ---------------------------------------------------------------------
 -- Row level security: the logged-in user (any authenticated user of this
@@ -310,7 +354,13 @@ select
   end as location_priority,
   m.negotiation_note,
   m.application_deadline,
-  m.location_evidence
+  m.location_evidence,
+  -- Link verification. 'dead' rows are already excluded by p.stale (the scan
+  -- marks them stale the moment it confirms them), so what the UI does with
+  -- these is show the caveat on an 'unknown' and the reassurance on a 'live'.
+  p.link_status,
+  p.link_checked_at,
+  p.link_note
 from job_postings p
 left join job_matches m on m.posting_id = p.id
 left join job_applications a on a.posting_id = p.id;
