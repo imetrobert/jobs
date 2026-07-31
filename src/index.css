@@ -352,6 +352,14 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .job-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
 .job-actions select { width: auto; }
 
+/* Link verification, as a pill on the collapsed card. Green is the one worth
+   spotting from across the list — it's the only state that means "this role is
+   definitely still open". The other two are deliberately low-contrast: they're
+   a caveat to read, not an alarm. */
+.link-live { background: rgba(63, 185, 80, .18); color: var(--good); }
+.link-unknown { background: rgba(210, 153, 34, .16); color: var(--warn); }
+.link-unchecked { background: rgba(139, 148, 158, .16); color: var(--muted); }
+
 /* Result of actually opening the posting URL during the last scan. Quiet by
    design — this is a footnote on a link, not a verdict on the role. */
 .link-note { margin: 10px 0 0; padding-left: 10px; border-left: 3px solid var(--line); }
