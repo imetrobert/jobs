@@ -370,14 +370,30 @@ returned by the feed on every scan, `last_seen_at` keeps refreshing, and the
 "stopped appearing anywhere" staleness rule never fires. None of the feed APIs
 expose a "still open" flag.
 
-The only ground truth is the posting page itself, so the scan now opens it.
-After scoring, it fetches the URL of every posting that scored high enough to
-be shown and reads the answer off the response — a `404`/`410`, an expiry
+Two signals catch this, and they work on different sources.
+
+**1. The ATS board no longer lists it.** For Greenhouse, Lever, Ashby, Workable
+and SmartRecruiters, the adapter already pulls the board's *entire* current
+contents in one call. So a posting missing from that pull has been taken down —
+known the same day, with no extra request and nothing for a site to refuse.
+This is the strongest signal available and it is free.
+
+It only fires when absence genuinely means something. A board that errored, or
+returned zero jobs (which could equally be a changed response shape), is
+skipped rather than closing everything on it. SmartRecruiters is skipped when
+its list comes back at the 100-item page limit, since postings past that cap
+were never seen and would look "missing". Aggregators are excluded entirely:
+Adzuna, Jooble and JSearch return a *search* over a much larger index, so a
+posting can fall out of the results on ranking alone while staying wide open.
+
+**2. The posting page says so.** For everything else, the scan opens the URL
+after scoring and reads the answer off the response — a `404`/`410`, an expiry
 banner ("no longer available", "this position has been filled", "cette offre
 n'est plus disponible"), or a redirect off the posting onto a search page.
-Confirmed-closed roles are marked stale and disappear from the list before you
-ever click them. The Matches header reports the count: *"…, 150 links checked
-(12 already closed, dropped)"*.
+
+Either way the role is marked stale and disappears before you can click it. The
+Matches header reports the total: *"…, 600 links checked (38 already closed,
+dropped)"*.
 
 Two design decisions worth knowing about:
 
@@ -398,11 +414,28 @@ A posting confirmed dead stays hidden even though the aggregator keeps
 re-listing it — but only while the URL is unchanged. If a later scan finds the
 same role at a better link, the old verdict is cleared and it gets re-checked.
 
-The checks are plain page loads: no API key, no quota, nothing to pay for. They
-are the slowest part of a scan, so `MAX_LINK_CHECKS_PER_RUN` (default 150)
-caps them, spending the budget on the highest-scoring roles first. Anything
-verified in the last `LINK_RECHECK_HOURS` (default 20) at the same URL is
-skipped. Set `MAX_LINK_CHECKS_PER_RUN=0` to turn the whole pass off.
+The page fetches are plain page loads: no API key, no quota, nothing to pay
+for. They are the slowest part of a scan, so `MAX_LINK_CHECKS_PER_RUN`
+(default 600) caps them, spending the budget on the highest-scoring roles
+first. Anything verified in the last `LINK_RECHECK_HOURS` (default 20) at the
+same URL is skipped. Set `MAX_LINK_CHECKS_PER_RUN=0` to turn that pass off —
+the ATS board check above is unaffected, since it costs nothing.
+
+That default lives in exactly one place: the `max_link_checks` input default in
+`job-scan.yml`. The app's **Refresh now** button sends only `trigger`, so it
+inherits the same number, and so does the monthly cron. Change it there and
+every path changes with it.
+
+**What the caveats on a card mean.** Only a *confirmed* close hides a posting,
+so anything still in the list is one of three things, and the card says which:
+
+| Card says | Meaning |
+|---|---|
+| *Posting page still open when checked 4h ago* | Verified. Good to go. |
+| *Jooble refuses automated checks…* | Unverifiable source. Jooble 403s every request and its listings routinely outlive the job — the likeliest source of a dead click. Open it first. |
+| *Adzuna blocks this page from Canada* | Regional block, **not** a closed job. Use "Search instead". |
+| *This board builds its pages in the browser* | Nothing readable in the HTML. Usually fine. |
+| *This link hasn't been checked yet* | Ran out of budget before reaching it. Raise the cap. |
 
 ### Screening risk is not the same as fit
 
@@ -533,10 +566,27 @@ locations first; it's the most common cause.
 Sources. Aggregator coverage of senior roles is genuinely patchy; company boards
 are not.
 
-**A card says "Couldn't confirm this one is still open"** — the link check ran
-and could not read the page: usually the site refuses automated requests, or it
-renders entirely in the browser. It is a caveat, not a verdict; the role is
-probably fine. Open the link before drafting anything.
+**A card carries an amber caveat instead of the green "still open" line** — the
+link check ran and could not reach a verdict; see the table above for what each
+one means. It is a caveat, not a verdict. Open the link before drafting
+anything.
+
+**Lots of cards say "hasn't been checked yet"** — the run hit
+`MAX_LINK_CHECKS_PER_RUN` before reaching them. Raise it: Actions → Job scan →
+Run workflow → `max_link_checks`. To see how many are outstanding:
+
+```sql
+select coalesce(p.link_status, 'not checked yet') as status, count(*)
+from job_postings p join job_matches m on m.posting_id = p.id
+where p.stale = false and m.score >= 35 group by 1 order by 2 desc;
+```
+
+**Everything from one ATS board vanished at once** — that board's adapter is
+supposed to be skipped when it returns nothing, so this should not happen. Check
+the Sources tab for an error on it, and `link_note` on the affected rows (it
+will read *"no longer listed on the … job board"*). If the board is fine in a
+browser, the adapter is misreading the response; open an issue rather than
+re-running, since a re-run would keep closing them.
 
 **A posting you clicked is still dead** — the check only catches sites that say
 so. A page that returns a normal-looking 200 with no expiry wording is

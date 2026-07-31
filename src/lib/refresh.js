@@ -39,6 +39,12 @@ export async function triggerScan() {
         'X-GitHub-Api-Version': '2022-11-28',
         'Content-Type': 'application/json',
       },
+      // Only `trigger` is sent. Everything else — how many postings get
+      // scored, how many links get verified — deliberately falls through to
+      // the workflow's own input defaults, so those numbers live in one place
+      // (job-scan.yml) rather than being duplicated here and silently
+      // overriding it. A scan started from this button gets exactly the same
+      // settings as one started from the Actions tab.
       body: JSON.stringify({ ref: REF, inputs: { trigger: 'manual' } }),
     }
   )
