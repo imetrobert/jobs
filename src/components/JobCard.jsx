@@ -75,6 +75,39 @@ function checkedAgo(iso) {
   return days === 1 ? 'yesterday' : `${days} days ago`
 }
 
+// `link_note` is written for the scan log — "HTTP 403 — the site refused an
+// automated request" is the right level of detail there and the wrong one on a
+// card. This turns it into what actually matters: is this worth your time, and
+// what should you do about it.
+//
+// The distinction that earns its keep is between "the check failed" and "this
+// source can never be checked". Jooble is the second kind — it refuses every
+// request, and its listings routinely outlive the job — so saying so plainly
+// is more use than any number of retries.
+function linkCaveat(job) {
+  const feed = String(job.source || '').split(':')[0]
+  const note = job.link_note || ''
+
+  if (/blocked in this region/i.test(note)) {
+    return 'Adzuna blocks this page from Canada. That is a regional block, not a closed job — use “Search instead” above to find the posting at its source.'
+  }
+  if (feed === 'jooble') {
+    return 'Jooble refuses automated checks, and its listings often outlive the job itself — this is the source most likely to send you to a dead posting. Open it before you spend time on it.'
+  }
+  if (/almost no readable content/i.test(note)) {
+    return 'This board builds its pages in the browser, so there was nothing for the check to read. The role is probably fine.'
+  }
+  if (/refused an automated request/i.test(note)) {
+    return 'This site refuses automated checks, so the posting could not be confirmed either way.'
+  }
+  if (/no response in|could not reach/i.test(note)) {
+    return 'The posting page did not respond in time, so it could not be confirmed either way.'
+  }
+  return note
+    ? `Could not confirm this is still open — ${note}.`
+    : 'Could not confirm this is still open.'
+}
+
 function slug(s) {
   return String(s || 'role').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
 }
@@ -289,10 +322,15 @@ export default function JobCard({ job, onChanged }) {
             </p>
           )}
           {job.link_status === 'unknown' && (
-            <p className="muted sm link-note warn">
-              Couldn&apos;t confirm this one is still open
-              {job.link_note ? ` — ${job.link_note}` : ''}. It may well be; the check just
-              couldn&apos;t read the page. Worth opening the link before you draft anything.
+            <p className="muted sm link-note warn">{linkCaveat(job)}</p>
+          )}
+          {/* Silence used to mean two very different things — "checked, fine"
+              and "never looked at" — which is exactly the ambiguity this
+              feature exists to remove. Say which. */}
+          {!job.link_status && (
+            <p className="muted sm link-note">
+              This link hasn&apos;t been checked yet, so there&apos;s no telling whether the
+              role is still open.
             </p>
           )}
 

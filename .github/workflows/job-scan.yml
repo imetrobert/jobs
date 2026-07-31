@@ -25,7 +25,11 @@ on:
       max_link_checks:
         description: 'Cap on posting URLs fetched to confirm the role is still open (0 disables)'
         required: false
-        default: '150'
+        # 600 covers the whole visible list with headroom. 150 left roughly
+        # three-quarters of it unchecked, which is where the dead postings
+        # were hiding. These are plain page loads — no key, no quota, no bill —
+        # so the only cost of a high cap is scan time.
+        default: '600'
         type: string
 
 permissions:
@@ -71,7 +75,12 @@ jobs:
           # Link verification: fetch the posting page for the roles that scored
           # well enough to be shown, and hide the ones that have already
           # closed. No API key and no quota — these are ordinary page loads.
-          MAX_LINK_CHECKS_PER_RUN: ${{ inputs.max_link_checks || '150' }}
+          # The `||` fallback covers the scheduled run, which passes no inputs
+          # at all. A manual dispatch — including the app's "Refresh now"
+          # button, which sends only `trigger` — picks up the input default
+          # above. Both paths land on the same number by design: the cap lives
+          # in exactly one place.
+          MAX_LINK_CHECKS_PER_RUN: ${{ inputs.max_link_checks || '600' }}
         run: node scripts/run-job-scan.js
 
       - name: Summary

@@ -89,6 +89,53 @@ function urlRank(source) {
   return URL_RANK[String(source || '').split(':')[0]] ?? 0
 }
 
+// Feeds whose adapter returns the COMPLETE current job board in a single call,
+// rather than a page of search results. For these, absence is authoritative:
+// a posting the board no longer lists has been taken down, and we know it the
+// same day instead of waiting out the 7-day "stopped appearing" window.
+//
+// This is the only signal here that needs no extra request and cannot be
+// refused: several of these boards (Ashby especially) build their public pages
+// in the browser, so fetching the posting URL returns markup with nothing to
+// read — the JSON board we already pulled is both cheaper and more reliable.
+//
+// The aggregators are deliberately absent from this list. Adzuna, Jooble and
+// JSearch return a SEARCH over a far larger index, so a posting can fall out
+// of the results on ranking or pagination alone while remaining wide open.
+// Absence there means nothing at all.
+const COMPLETE_BOARD_KINDS = new Set([
+  'greenhouse',
+  'lever',
+  'ashby',
+  'workable',
+  'smartrecruiters',
+])
+
+// What fetchSmartRecruiters asks for. A full page back means there may be more
+// postings we never saw — and the ones we never saw would look "missing",
+// which is precisely the false positive this whole feature exists to remove.
+const SMARTRECRUITERS_PAGE_LIMIT = 100
+
+// Record every posting id a complete board is currently advertising, so the
+// ones it has stopped advertising can be closed below.
+function indexCompleteBoard(index, src, rows) {
+  if (!COMPLETE_BOARD_KINDS.has(src.kind)) return
+  // An empty board is ambiguous: the company may genuinely have nothing open,
+  // or the vendor may have changed a response shape and we are reading zero
+  // jobs out of a perfectly good payload. Closing every posting on the board
+  // on the strength of that guess is far too destructive, so an empty result
+  // is left to the ordinary 7-day absence rule instead.
+  if (!rows.length) return
+  if (src.kind === 'smartrecruiters' && rows.length >= SMARTRECRUITERS_PAGE_LIMIT) {
+    console.log(`    (${rows.length} postings — board may be truncated, skipping the closed check)`)
+    return
+  }
+  for (const r of rows) {
+    if (!index.has(r.source)) index.set(r.source, new Set())
+    index.get(r.source).add(String(r.source_id))
+  }
+}
+
 // ---------- helpers ----------
 
 function normalize(s) {
@@ -129,6 +176,85 @@ function buildQueries(profile) {
 
 function buildLocations(profile) {
   return (profile.locations || []).filter(Boolean).slice(0, 4)
+}
+
+// ---------- closed-posting detection ----------
+
+/**
+ * Close every posting a complete ATS board has stopped listing.
+ *
+ * The strongest signal available, and the cheapest: these adapters already
+ * pulled the board's entire current contents, so a posting missing from that
+ * pull has been taken down. No HTTP request, no HTML parsing, nothing for a
+ * site to refuse — which matters because the ATS boards are exactly the ones
+ * whose public pages render in the browser and read as empty to a fetcher.
+ *
+ * Only boards that fetched successfully and returned a plausibly complete list
+ * are in `boardIndex` (see indexCompleteBoard), so reaching this point already
+ * means absence is meaningful. Never throws.
+ */
+async function closeMissingFromBoards(db, boardIndex, stats) {
+  if (!boardIndex.size) return
+  const { data: postings, error } = await db
+    .from('job_postings')
+    .select('id, title, company, url, source_ids')
+    .eq('stale', false)
+  if (error) {
+    console.warn(`Closed-posting check skipped — could not list postings: ${error.message}`)
+    return
+  }
+
+  const closed = []
+  for (const p of postings) {
+    for (const [board, stillListed] of boardIndex) {
+      const id = p.source_ids?.[board]
+      // This posting never came from that board — it says nothing either way.
+      if (id == null) continue
+      if (stillListed.has(String(id))) continue
+      // The ATS is the employer's own system and outranks any aggregator that
+      // is still syndicating this role: if the board dropped it, it is closed.
+      closed.push({ posting: p, board })
+      break
+    }
+  }
+
+  if (!closed.length) {
+    console.log(`Closed-posting check: every posting on ${boardIndex.size} board(s) is still listed.`)
+    return
+  }
+
+  const checkedAt = new Date().toISOString()
+  let written = 0
+  for (let i = 0; i < closed.length; i += 20) {
+    const chunk = closed.slice(i, i + 20)
+    const settled = await Promise.all(
+      chunk.map(({ posting, board }) =>
+        db
+          .from('job_postings')
+          .update({
+            stale: true,
+            link_status: 'dead',
+            link_note: `no longer listed on the ${board} job board`,
+            link_checked_at: checkedAt,
+            // Records what the verdict applies to, same as a fetched check, so
+            // the "dead survives the next upsert" rule holds for these too.
+            link_checked_url: posting.url,
+          })
+          .eq('id', posting.id)
+      )
+    )
+    for (const { error: upErr } of settled) {
+      if (upErr) console.warn(`  could not close a delisted posting: ${upErr.message}`)
+      else written++
+    }
+  }
+
+  for (const { posting, board } of closed.slice(0, 20)) {
+    console.log(`  closed  ${posting.title} @ ${posting.company || '?'} — gone from ${board}`)
+  }
+  if (closed.length > 20) console.log(`  … and ${closed.length - 20} more`)
+  stats.links_dead += written
+  console.log(`Closed-posting check: ${written} postings delisted by their own ATS board.`)
 }
 
 // ---------- link verification ----------
@@ -279,6 +405,8 @@ async function main() {
 
     // ---- fetch ----
     const raw = []
+    // source key ('ashby:acme') -> every posting id that board still lists.
+    const boardIndex = new Map()
     for (const src of sources) {
       const adapter = ADAPTERS[src.kind]
       if (!adapter) {
@@ -295,6 +423,10 @@ async function main() {
         })
         console.log(`  ${src.label}: ${rows.length}`)
         raw.push(...rows)
+        // Only reached when the adapter SUCCEEDED. A board that threw tells us
+        // nothing about what it does or doesn't still list, and must never be
+        // read as "everything on it is closed".
+        indexCompleteBoard(boardIndex, src, rows)
         await db
           .from('job_sources')
           .update({ last_ok_at: new Date().toISOString(), last_error: null })
@@ -424,6 +556,11 @@ async function main() {
       console.log(`Confirmed-dead links kept hidden: ${sameUrl.length}` +
         (newUrl.length ? ` (${newUrl.length} relinked, will be re-checked)` : ''))
     }
+
+    // ---- close anything its own ATS board has stopped listing ----
+    // Runs before scoring so a role that has already been taken down never
+    // costs an LLM call, and never reaches the list at all.
+    await closeMissingFromBoards(db, boardIndex, stats)
 
     // ---- find what still needs scoring ----
     // Two plain queries rather than an embedded "is null" filter — the
