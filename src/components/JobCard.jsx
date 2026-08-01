@@ -147,6 +147,14 @@ export default function JobCard({ job, onChanged }) {
   // visit) pushes the rest of the page out of view.
   const [docsOpen, setDocsOpen] = useState(false)
   const [err, setErr] = useState('')
+  // Deliberately NOT the same flag as `busy`. Sharing one made clicking a
+  // dismiss button flip the generate button's label to "Drafting…", which
+  // reads exactly like the CV writer had just been started — on the click
+  // whose whole purpose is to throw the role away. Nothing was ever
+  // generated, but a progress label that lies about which action is running
+  // is its own bug. Holds the reason being processed, so the button that was
+  // actually pressed is the one that shows progress.
+  const [dismissing, setDismissing] = useState('')
 
   async function setStatus(status) {
     await supabase.from('job_applications').upsert(
@@ -157,18 +165,17 @@ export default function JobCard({ job, onChanged }) {
   }
 
   async function dismiss(reason) {
-    setBusy(true)
+    setDismissing(reason)
     setErr('')
     try {
       await dismissPosting(job, reason)
+      // The row is gone, so the parent's reload unmounts this card. `dismissing`
+      // is left set so nothing re-enables in the gap before that happens.
       onChanged?.()
     } catch (e) {
       setErr(e.message || 'Could not remove this role')
-      setBusy(false)
+      setDismissing('')
     }
-    // On success the row is gone and this card unmounts on the parent's
-    // reload, so `busy` is deliberately left set — flipping it back would
-    // briefly re-enable buttons on a posting that no longer exists.
   }
 
   async function generate() {
@@ -357,6 +364,29 @@ export default function JobCard({ job, onChanged }) {
             </select>
           </div>
 
+          {/* Whether the link was actually opened and found alive, stated
+              before you spend time on the role rather than after. Confirmed-
+              closed postings never get this far — the scan hides them — so
+              the only two cases here are "checked, fine" and "couldn't
+              tell", and the second one says why. */}
+          {job.link_status === 'live' && job.link_checked_at && (
+            <p className="muted sm link-note ok">
+              Posting page still open when checked {checkedAgo(job.link_checked_at)}.
+            </p>
+          )}
+          {job.link_status === 'unknown' && (
+            <p className="muted sm link-note warn">{linkCaveat(job)}</p>
+          )}
+          {/* Silence used to mean two very different things — "checked, fine"
+              and "never looked at" — which is exactly the ambiguity this
+              feature exists to remove. Say which. */}
+          {!job.link_status && (
+            <p className="muted sm link-note">
+              This link hasn&apos;t been checked yet, so there&apos;s no telling whether the
+              role is still open.
+            </p>
+          )}
+
           {/* The two ways a role stops being worth looking at, one click each
               and sitting right under the link — because that is where you
               find out. These DELETE the posting rather than filing it under a
@@ -370,11 +400,11 @@ export default function JobCard({ job, onChanged }) {
                 <button
                   key={reason}
                   className="btn ghost sm"
-                  disabled={busy}
+                  disabled={busy || Boolean(dismissing)}
                   onClick={() => dismiss(reason)}
                   title="Deletes the posting and stops future scans re-importing it. Permanent."
                 >
-                  {label}
+                  {dismissing === reason ? 'Deleting…' : label}
                 </button>
               ))}
             </span>
