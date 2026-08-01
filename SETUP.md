@@ -440,6 +440,24 @@ There is no pill for "closed": those are hidden from the list outright. Every
 row gets one of the three, including the plain unchecked case, since an absent
 badge would read as reassurance.
 
+**Clearing a role yourself.** The check can only catch what a site is willing
+to admit, so an expanded card carries two one-click dismissals under the link,
+which is where you find out:
+
+- **No longer available** — you opened it and the posting is gone. Sets the
+  role's status to `unavailable`.
+- **Not interested** — it's still up, you just don't want it. Sets `passed`.
+
+Both remove it from Matches immediately. Neither deletes anything: the role
+still appears on the **Pipeline** page under that heading, which is where a
+mistaken click gets undone by setting the status back.
+
+They're kept as separate statuses on purpose. `passed` is a decision about the
+*role*; `unavailable` is a fact about the *posting* — nobody decided anything.
+"I passed on 40 roles" and "40 roles evaporated before I could apply" say very
+different things about how a search is going, and collapsing them into one
+bucket would lose that.
+
 **What the caveats on a card mean.** Expanding a card spells out the same
 verdict in full. Only a *confirmed* close hides a posting, so anything still in
 the list is one of three things:

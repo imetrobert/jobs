@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
-
-const STATUSES = ['interested', 'applied', 'interviewing', 'offer', 'rejected', 'passed']
+import { STATUSES, CLOSED_STATUSES as CLOSED, statusLabel } from '../lib/statuses'
 
 function money(job) {
   if (!job.salary_min && !job.salary_max) return null
@@ -212,7 +211,7 @@ export default function JobCard({ job, onChanged }) {
                 since a dead link makes the rest of the card moot. */}
             <span className={`tag ${link.cls}`} title={link.title}>{link.label}</span>
             {job.app_status && job.app_status !== 'interested' && (
-              <span className="tag status">{job.app_status}</span>
+              <span className="tag status">{statusLabel(job.app_status)}</span>
             )}
             {job.location_fit && (
               <span className={`tag loc-${job.location_fit}`}>{locationLabel(job.location_fit)}</span>
@@ -337,10 +336,35 @@ export default function JobCard({ job, onChanged }) {
               onChange={e => setStatus(e.target.value)}
             >
               {STATUSES.map(s => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s} value={s}>{statusLabel(s)}</option>
               ))}
             </select>
           </div>
+
+          {/* The two ways a role stops being worth looking at, one click each
+              and sitting right under the link — because that is where you
+              find out. Digging them out of the dropdown above worked, but the
+              whole point is to clear a dead posting the moment you hit it,
+              without a three-step detour. Hidden once already set, so the row
+              never offers you the state it is in. */}
+          {!CLOSED.includes(job.app_status) && (
+            <div className="job-dismiss">
+              <button
+                className="btn ghost sm"
+                onClick={() => setStatus('unavailable')}
+                title="The posting is gone. Removes it from Matches — undo it on the Pipeline page."
+              >
+                No longer available
+              </button>
+              <button
+                className="btn ghost sm"
+                onClick={() => setStatus('passed')}
+                title="Not for you. Removes it from Matches — undo it on the Pipeline page."
+              >
+                Not interested
+              </button>
+            </div>
+          )}
 
           {/* Whether the link was actually opened and found alive, stated
               before you spend time on the role rather than after. Confirmed-

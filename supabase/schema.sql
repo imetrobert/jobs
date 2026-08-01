@@ -225,13 +225,28 @@ create index if not exists job_matches_score_idx on job_matches (score desc);
 create table if not exists job_applications (
   posting_id uuid primary key references job_postings(id) on delete cascade,
   status text not null default 'interested'
-    check (status in ('interested','generating','ready','applied','interviewing','offer','rejected','passed')),
+    -- 'passed' and 'unavailable' both take a role out of Matches, and are
+    -- deliberately distinct: 'passed' is a decision about the ROLE (you don't
+    -- want it), 'unavailable' is a fact about the POSTING (it's gone, nobody
+    -- decided anything). "I passed on 40 roles" and "40 roles evaporated
+    -- before I could apply" say very different things about a search.
+    -- Nothing is ever deleted — both still show on the Pipeline page, which
+    -- is where a mistaken click gets undone.
+    check (status in ('interested','generating','ready','applied','interviewing','offer','rejected','passed','unavailable')),
   cover_letter text,
   tailored_cv text,
   notes text,
   generated_at timestamptz,
   updated_at timestamptz not null default now()
 );
+
+-- Migration for installs created before 'unavailable' existed. A check
+-- constraint can't be widened in place, so it is dropped and rebuilt — safe
+-- and idempotent, since the new list is a superset of the old one and no
+-- existing row can fail it.
+alter table job_applications drop constraint if exists job_applications_status_check;
+alter table job_applications add constraint job_applications_status_check
+  check (status in ('interested','generating','ready','applied','interviewing','offer','rejected','passed','unavailable'));
 
 -- ---------------------------------------------------------------------
 -- Runs: log of every scan so the UI can show progress and last-run state.

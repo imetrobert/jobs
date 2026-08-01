@@ -352,6 +352,18 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .job-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
 .job-actions select { width: auto; }
 
+/* One-click ways to clear a role off the Matches list. Set apart from the
+   main actions row above it: these remove the card, and shouldn't sit at the
+   same visual weight as "draft a cover letter for it". */
+.job-dismiss {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
 /* Link verification, as a pill on the collapsed card. Green is the one worth
    spotting from across the list — it's the only state that means "this role is
    definitely still open". The other two are deliberately low-contrast: they're
