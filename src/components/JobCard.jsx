@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
-
-const STATUSES = ['interested', 'applied', 'interviewing', 'offer', 'rejected', 'passed']
+import { STATUSES, statusLabel, DISMISS_REASONS } from '../lib/statuses'
+import { dismissPosting } from '../lib/dismiss'
 
 function money(job) {
   if (!job.salary_min && !job.salary_max) return null
@@ -156,6 +156,21 @@ export default function JobCard({ job, onChanged }) {
     onChanged?.()
   }
 
+  async function dismiss(reason) {
+    setBusy(true)
+    setErr('')
+    try {
+      await dismissPosting(job, reason)
+      onChanged?.()
+    } catch (e) {
+      setErr(e.message || 'Could not remove this role')
+      setBusy(false)
+    }
+    // On success the row is gone and this card unmounts on the parent's
+    // reload, so `busy` is deliberately left set — flipping it back would
+    // briefly re-enable buttons on a posting that no longer exists.
+  }
+
   async function generate() {
     setBusy(true)
     setErr('')
@@ -212,7 +227,7 @@ export default function JobCard({ job, onChanged }) {
                 since a dead link makes the rest of the card moot. */}
             <span className={`tag ${link.cls}`} title={link.title}>{link.label}</span>
             {job.app_status && job.app_status !== 'interested' && (
-              <span className="tag status">{job.app_status}</span>
+              <span className="tag status">{statusLabel(job.app_status)}</span>
             )}
             {job.location_fit && (
               <span className={`tag loc-${job.location_fit}`}>{locationLabel(job.location_fit)}</span>
@@ -337,33 +352,33 @@ export default function JobCard({ job, onChanged }) {
               onChange={e => setStatus(e.target.value)}
             >
               {STATUSES.map(s => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s} value={s}>{statusLabel(s)}</option>
               ))}
             </select>
           </div>
 
-          {/* Whether the link was actually opened and found alive, stated
-              before you spend time on the role rather than after. Confirmed-
-              closed postings never get this far — the scan hides them — so
-              the only two cases here are "checked, fine" and "couldn't
-              tell", and the second one says why. */}
-          {job.link_status === 'live' && job.link_checked_at && (
-            <p className="muted sm link-note ok">
-              Posting page still open when checked {checkedAgo(job.link_checked_at)}.
-            </p>
-          )}
-          {job.link_status === 'unknown' && (
-            <p className="muted sm link-note warn">{linkCaveat(job)}</p>
-          )}
-          {/* Silence used to mean two very different things — "checked, fine"
-              and "never looked at" — which is exactly the ambiguity this
-              feature exists to remove. Say which. */}
-          {!job.link_status && (
-            <p className="muted sm link-note">
-              This link hasn&apos;t been checked yet, so there&apos;s no telling whether the
-              role is still open.
-            </p>
-          )}
+          {/* The two ways a role stops being worth looking at, one click each
+              and sitting right under the link — because that is where you
+              find out. These DELETE the posting rather than filing it under a
+              status: a status still has to be shown somewhere, and the point
+              is that it stops existing. Said plainly above the buttons, since
+              there is no undo in the app. */}
+          <div className="job-dismiss">
+            <span className="muted sm">Delete this role for good:</span>
+            <span className="row">
+              {Object.entries(DISMISS_REASONS).map(([reason, label]) => (
+                <button
+                  key={reason}
+                  className="btn ghost sm"
+                  disabled={busy}
+                  onClick={() => dismiss(reason)}
+                  title="Deletes the posting and stops future scans re-importing it. Permanent."
+                >
+                  {label}
+                </button>
+              ))}
+            </span>
+          </div>
 
           {err && <div className="err">{err}</div>}
 

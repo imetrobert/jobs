@@ -4,6 +4,7 @@ import Layout from './Layout'
 import JobCard from './JobCard'
 import KeywordGaps from './KeywordGaps'
 import { triggerScan, getToken, setToken } from '../lib/refresh'
+import { CLOSED_STATUSES } from '../lib/statuses'
 
 const TIERS = [
   { key: 'all', label: 'All' },
@@ -62,13 +63,14 @@ export default function Jobs({ session }) {
       .eq('stale', false)
       .not('score', 'is', null)
       .gte('score', 35)
-      // Closed out: rejected or passed on, so it's done and shouldn't keep
-      // cluttering discovery — the Pipeline page is where it stays visible.
+      // Closed out: rejected, passed on, or the posting is gone — done either
+      // way, and it shouldn't keep cluttering discovery. The Pipeline page is
+      // where it stays visible, and where a mistaken click gets undone.
       // Still-active statuses (applied/interviewing/offer) and untracked
       // roles (app_status is null, the common case) both pass through — a
       // plain .neq() would silently drop every untracked row too, since SQL
       // treats "null <> value" as unknown rather than true.
-      .or('app_status.is.null,app_status.not.in.(rejected,passed)')
+      .or(`app_status.is.null,app_status.not.in.(${CLOSED_STATUSES.join(',')})`)
       // Belt and braces on dead links. The scan marks a posting stale the
       // moment it confirms the page says the role is closed, so `stale` above
       // already excludes these — but that coupling is easy to break, and a
