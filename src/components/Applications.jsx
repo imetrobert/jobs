@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import Layout from './Layout'
 import JobCard from './JobCard'
-import { STATUSES, statusLabel } from '../lib/statuses'
+import { PIPELINE_COLUMNS, statusLabel } from '../lib/statuses'
 
 export default function Applications() {
   const [rows, setRows] = useState([])
@@ -36,7 +36,7 @@ export default function Applications() {
         </div>
       )}
 
-      {STATUSES.map(col => {
+      {PIPELINE_COLUMNS.map(col => {
         const group = rows.filter(r => r.app_status === col)
         if (!group.length) return null
         return (

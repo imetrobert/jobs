@@ -357,12 +357,17 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
    same visual weight as "draft a cover letter for it". */
 .job-dismiss {
   display: flex;
-  gap: 8px;
+  gap: 8px 12px;
   flex-wrap: wrap;
-  margin-top: 10px;
-  padding-top: 10px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
+.job-dismiss .row { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Destructive and irreversible, so the buttons pick up the danger treatment
+   on hover rather than looking like the rest of the ghost buttons. */
+.job-dismiss .btn:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); }
 
 /* Link verification, as a pill on the collapsed card. Green is the one worth
    spotting from across the list — it's the only state that means "this role is

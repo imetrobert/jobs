@@ -440,23 +440,48 @@ There is no pill for "closed": those are hidden from the list outright. Every
 row gets one of the three, including the plain unchecked case, since an absent
 badge would read as reassurance.
 
-**Clearing a role yourself.** The check can only catch what a site is willing
-to admit, so an expanded card carries two one-click dismissals under the link,
-which is where you find out:
+**Throwing a role away.** The check can only catch what a site is willing to
+admit, so an expanded card carries two buttons under the link, which is where
+you find out:
 
-- **No longer available** — you opened it and the posting is gone. Sets the
-  role's status to `unavailable`.
-- **Not interested** — it's still up, you just don't want it. Sets `passed`.
+- **No longer available** — you opened it and the posting is gone.
+- **Not interested** — it's still up, you just don't want it.
 
-Both remove it from Matches immediately. Neither deletes anything: the role
-still appears on the **Pipeline** page under that heading, which is where a
-mistaken click gets undone by setting the status back.
+Either one **deletes the posting outright**. It disappears from Matches and
+from Pipeline, and the match write-up, keyword analysis and any generated
+documents go with it (they cascade off the posting row).
 
-They're kept as separate statuses on purpose. `passed` is a decision about the
-*role*; `unavailable` is a fact about the *posting* — nobody decided anything.
-"I passed on 40 roles" and "40 roles evaporated before I could apply" say very
-different things about how a search is going, and collapsing them into one
-bucket would lose that.
+**Deleting alone would not be enough**, which is the part worth understanding.
+The feeds still carry the role, so the next scan would re-import it, spend an
+LLM call re-scoring it, and put it straight back. So a row is written to
+`job_dismissed` first, keyed on the posting's *fingerprint* — the normalized
+company+title hash, not the posting id, since the id is exactly what changes on
+re-import. Every scan reads that list and drops those roles before they are
+written. Dismissing therefore also covers the same role re-posted months later,
+or arriving from a different feed.
+
+The two buttons differ only in the `reason` they record. Both delete; the
+distinction is kept because "I passed on 40 roles" and "40 roles evaporated
+before I could apply" say very different things about how a search is going:
+
+```sql
+select reason, count(*) from job_dismissed group by reason;
+```
+
+**Undoing one.** There is no undo in the app — that is the trade for it being
+gone everywhere. `job_dismissed` keeps the title and company precisely so a
+mistake is recoverable by hand:
+
+```sql
+-- see what you've thrown away, most recent first
+select dismissed_at, reason, company, title from job_dismissed order by 1 desc;
+
+-- let one back in; the next scan re-imports and re-scores it
+delete from job_dismissed where fingerprint = '<the fingerprint>';
+```
+
+The posting itself is gone for good — what comes back is a fresh import from
+the feed, which is the same thing you'd have got had you never dismissed it.
 
 **What the caveats on a card mean.** Expanding a card spells out the same
 verdict in full. Only a *confirmed* close hides a posting, so anything still in

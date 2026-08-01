@@ -482,8 +482,39 @@ async function main() {
       }
       existing.remote = existing.remote || job.remote
     }
-    const unique = [...byPrint.values()]
+    let unique = [...byPrint.values()]
     console.log(`Deduped: ${raw.length} → ${unique.length}`)
+
+    // ---- drop anything thrown away in the app ----
+    // Deleting a posting in the browser is not enough on its own: the feeds
+    // still carry the role, so without this it would be re-imported here,
+    // re-scored (an LLM call), and back in the list within the hour. The
+    // suppression list is keyed on fingerprint rather than posting id
+    // precisely because the id is what changes on re-import.
+    const { data: dismissedRows, error: dismissedErr } = await db
+      .from('job_dismissed')
+      .select('fingerprint')
+    if (dismissedErr) {
+      // Fail loudly. Carrying on would silently resurrect every role that was
+      // ever thrown away, which is worse than a failed run.
+      throw new Error(`Could not load the dismissed list: ${dismissedErr.message}`)
+    }
+    const dismissed = new Set((dismissedRows || []).map(r => r.fingerprint))
+    if (dismissed.size) {
+      const before = unique.length
+      unique = unique.filter(j => !dismissed.has(j.fingerprint))
+      if (before !== unique.length) {
+        console.log(`Suppressed: ${before - unique.length} re-imported roles you had thrown away`)
+      }
+      // Sweep up drift: a posting whose delete failed after its suppression
+      // row was written (see lib/dismiss.js — the order there means this is
+      // the recoverable half), or one dismissed while a scan was mid-flight.
+      const { error: sweepErr } = await db
+        .from('job_postings')
+        .delete()
+        .in('fingerprint', [...dismissed])
+      if (sweepErr) console.warn(`Could not sweep dismissed postings: ${sweepErr.message}`)
+    }
 
     // ---- persist postings ----
     const now = new Date().toISOString()

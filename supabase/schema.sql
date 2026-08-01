@@ -225,14 +225,10 @@ create index if not exists job_matches_score_idx on job_matches (score desc);
 create table if not exists job_applications (
   posting_id uuid primary key references job_postings(id) on delete cascade,
   status text not null default 'interested'
-    -- 'passed' and 'unavailable' both take a role out of Matches, and are
-    -- deliberately distinct: 'passed' is a decision about the ROLE (you don't
-    -- want it), 'unavailable' is a fact about the POSTING (it's gone, nobody
-    -- decided anything). "I passed on 40 roles" and "40 roles evaporated
-    -- before I could apply" say very different things about a search.
-    -- Nothing is ever deleted — both still show on the Pipeline page, which
-    -- is where a mistaken click gets undone.
-    check (status in ('interested','generating','ready','applied','interviewing','offer','rejected','passed','unavailable')),
+    -- 'passed' is legacy: dismissing a role now DELETES it (see job_dismissed
+    -- below) rather than parking it in a status. Kept so rows written before
+    -- that change still load, and still stay out of Matches.
+    check (status in ('interested','generating','ready','applied','interviewing','offer','rejected','passed')),
   cover_letter text,
   tailored_cv text,
   notes text,
@@ -240,13 +236,35 @@ create table if not exists job_applications (
   updated_at timestamptz not null default now()
 );
 
--- Migration for installs created before 'unavailable' existed. A check
--- constraint can't be widened in place, so it is dropped and rebuilt — safe
--- and idempotent, since the new list is a superset of the old one and no
--- existing row can fail it.
-alter table job_applications drop constraint if exists job_applications_status_check;
-alter table job_applications add constraint job_applications_status_check
-  check (status in ('interested','generating','ready','applied','interviewing','offer','rejected','passed','unavailable'));
+-- ---------------------------------------------------------------------
+-- Dismissed: roles you have thrown away for good.
+--
+-- Deleting the posting row on its own does NOT make a role go away — the
+-- feeds still carry it, so the very next scan re-imports it, re-scores it
+-- (an LLM call) and puts it back in the list. This table is what makes the
+-- deletion stick: the scan reads it and drops those postings before they are
+-- ever written.
+--
+-- Keyed on `fingerprint` (the normalized company+title hash), not on the
+-- posting id, precisely because the id is what changes when a role is
+-- re-imported. Dismissing therefore also covers the same role re-posted
+-- later, and the same role arriving from a different feed.
+--
+-- Title and company are stored purely so this is legible to a human: the row
+-- is the only trace left of a deleted posting, and the only way to undo one is
+-- to delete from here (see SETUP.md), which needs the role to be identifiable.
+-- ---------------------------------------------------------------------
+create table if not exists job_dismissed (
+  fingerprint text primary key,
+  title text,
+  company text,
+  -- 'unavailable' (the posting is gone) or 'not_interested' (it is still up,
+  -- you just don't want it). Recorded because the two say very different
+  -- things about how a search is going, even though both delete the row.
+  reason text not null default 'not_interested',
+  dismissed_at timestamptz not null default now()
+);
+create index if not exists job_dismissed_at_idx on job_dismissed (dismissed_at desc);
 
 -- ---------------------------------------------------------------------
 -- Runs: log of every scan so the UI can show progress and last-run state.
@@ -278,6 +296,7 @@ alter table job_runs add column if not exists links_dead int not null default 0;
 -- ---------------------------------------------------------------------
 alter table job_profile enable row level security;
 alter table job_sources enable row level security;
+alter table job_dismissed enable row level security;
 alter table job_postings enable row level security;
 alter table job_matches enable row level security;
 alter table job_applications enable row level security;
@@ -295,11 +314,24 @@ drop policy if exists "job_applications_auth" on job_applications;
 create policy "job_applications_auth" on job_applications
   for all to authenticated using (true) with check (true);
 
+drop policy if exists "job_dismissed_auth" on job_dismissed;
+create policy "job_dismissed_auth" on job_dismissed
+  for all to authenticated using (true) with check (true);
+
 -- Postings, matches and runs are written only by the scan job (service
 -- role). The app reads them.
 drop policy if exists "job_postings_read" on job_postings;
 create policy "job_postings_read" on job_postings
   for select to authenticated using (true);
+
+-- ...with one exception: throwing a role away deletes the posting outright,
+-- and that happens from the browser. DELETE only — the app still cannot
+-- INSERT or UPDATE a posting, so nothing here lets it edit scan results.
+-- The cascade to job_matches and job_applications is a referential action,
+-- run by the system rather than by this role, so those stay read-only too.
+drop policy if exists "job_postings_dismiss" on job_postings;
+create policy "job_postings_dismiss" on job_postings
+  for delete to authenticated using (true);
 
 drop policy if exists "job_matches_read" on job_matches;
 create policy "job_matches_read" on job_matches
@@ -375,7 +407,10 @@ select
   -- these is show the caveat on an 'unknown' and the reassurance on a 'live'.
   p.link_status,
   p.link_checked_at,
-  p.link_note
+  p.link_note,
+  -- Needed by the dismiss buttons: the suppression list is keyed on the
+  -- fingerprint, since the posting id changes when a feed re-imports a role.
+  p.fingerprint
 from job_postings p
 left join job_matches m on m.posting_id = p.id
 left join job_applications a on a.posting_id = p.id;
