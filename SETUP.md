@@ -451,6 +451,27 @@ Either one **deletes the posting outright**. It disappears from Matches and
 from Pipeline, and the match write-up, keyword analysis and any generated
 documents go with it (they cascade off the posting row).
 
+**Company-name variants are collapsed.** The fingerprint hashes the company
+with legal-entity suffixes stripped from the end (`Inc`, `Ltd`, `LLC`, `Corp`,
+`GmbH`, `SA`…) and a leading `The` removed, so an ATS board publishing
+"Applied Systems" and Jooble syndicating "Applied Systems, Inc." land on one
+row. That matters beyond tidiness: merging is what lets the card link to the
+*ATS* copy rather than the aggregator's, so an unmerged pair leaves the Jooble
+row alive with its own unverifiable link — the exact row that sends you to a
+closed posting.
+
+Only unambiguous legal forms, only at the end. `Co` is the trap: "The
+Co-operators" normalizes to `the co operators`, and stripping `co` wherever it
+appeared would turn a real insurer into `operators`.
+
+Changing that scheme changes every hash, which would otherwise mean a week of
+duplicates while the old rows aged out, and every past dismissal silently
+un-dismissing itself. Both are handled in the scan: dismissals are re-keyed
+from the title and company stored alongside them, and superseded posting rows
+are retired the same run — but only when the role was definitely re-written
+under the new hash, and never when an application is attached to it, since a
+generated cover letter is not something to discard to tidy a list.
+
 **Deleting alone would not be enough**, which is the part worth understanding.
 The feeds still carry the role, so the next scan would re-import it, spend an
 LLM call re-scoring it, and put it straight back. So a row is written to

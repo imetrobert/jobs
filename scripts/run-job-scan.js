@@ -150,14 +150,42 @@ function normalize(s) {
 // Collapses the same role syndicated across Adzuna, Jooble and the company's
 // own ATS into one row. City is deliberately excluded — the same posting is
 // often listed as "Montreal", "Montreal, QC" and "Quebec, Canada".
+// Legal-entity suffixes say nothing about WHICH company this is, but feeds
+// disagree about them constantly: an ATS board publishes "Applied Systems"
+// while Jooble syndicates the same role as "Applied Systems, Inc." Those
+// hashed differently, so the two never merged — and the damage was not just a
+// duplicate card. Merging is what picks the ATS link over the aggregator's,
+// so an unmerged pair leaves the Jooble copy alive with its own unverifiable
+// link, which is precisely the row that sends you to a closed posting.
+//
+// Only stripped from the END, and only unambiguous legal forms. "Co" and
+// "The" are the traps: "The Co-operators" normalizes to "the co operators",
+// and stripping "co" wherever it appears would turn a real insurer into
+// "operators". Leading "The" goes (feeds are inconsistent about it), trailing
+// legal forms go, everything else stays.
+const COMPANY_SUFFIX =
+  /\s+(inc|incorporated|llc|llp|lp|ltd|ltda|limited|corp|corporation|co|company|gmbh|ag|sa|sas|sarl|bv|nv|plc|pty|srl|spa|pte|kk)$/
+
+function companyKey(company) {
+  let s = normalize(company).replace(/^the\s+/, '')
+  // Repeat: "Foo Holdings Ltd Inc" and "Foo Holdings" should agree.
+  let prev
+  do {
+    prev = s
+    s = s.replace(COMPANY_SUFFIX, '').trim()
+  } while (s !== prev && s)
+  // A company named nothing but its legal form keeps the original key rather
+  // than collapsing into the empty string with every other such company.
+  return s || normalize(company)
+}
+
 function fingerprint(job) {
   const title = normalize(job.title)
     // Strip req numbers and bracketed noise that differ per syndicator.
     .replace(/\b(job|req|requisition)?\s*#?\d{3,}\b/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-  const company = normalize(job.company)
-  return crypto.createHash('sha1').update(`${company}|${title}`).digest('hex')
+  return crypto.createHash('sha1').update(`${companyKey(job.company)}|${title}`).digest('hex')
 }
 
 function toISO(value) {
@@ -176,6 +204,70 @@ function buildQueries(profile) {
 
 function buildLocations(profile) {
   return (profile.locations || []).filter(Boolean).slice(0, 4)
+}
+
+// ---------- fingerprint scheme convergence ----------
+
+/**
+ * Retire postings stored under a superseded fingerprint scheme.
+ *
+ * Changing how fingerprints are computed makes every existing row invisible
+ * to the upsert — it writes new rows instead of updating them, so the old
+ * ones sit there as duplicates until the 7-day stale window finally hides
+ * them. A week of seeing every role twice is a bad way to ship a fix whose
+ * entire point was removing duplicates.
+ *
+ * A row is only retired when both hold:
+ *   - recomputing its fingerprint from its OWN title and company disagrees
+ *     with what is stored, i.e. it predates the current scheme; and
+ *   - that recomputed fingerprint is one this run just wrote, i.e. the role
+ *     is definitely still represented.
+ *
+ * Anything with an application attached is left alone regardless. Deleting a
+ * posting cascades to job_applications, and a generated cover letter or a
+ * status you set is not something to throw away to tidy a list — those age
+ * out the ordinary way instead. Never throws.
+ */
+async function convergeLegacyFingerprints(db, writtenThisRun) {
+  const { data: existing, error } = await db
+    .from('job_postings')
+    .select('id, title, company, fingerprint')
+  if (error) {
+    console.warn(`Fingerprint convergence skipped — could not list postings: ${error.message}`)
+    return
+  }
+
+  const stale = existing.filter(p => {
+    const current = fingerprint({ title: p.title, company: p.company })
+    return current !== p.fingerprint && writtenThisRun.has(current)
+  })
+  if (!stale.length) return
+
+  const { data: tracked, error: appErr } = await db
+    .from('job_applications')
+    .select('posting_id')
+    .in('posting_id', stale.map(p => p.id))
+  if (appErr) {
+    console.warn(`Fingerprint convergence skipped — could not check applications: ${appErr.message}`)
+    return
+  }
+  const keep = new Set((tracked || []).map(a => a.posting_id))
+  const removable = stale.filter(p => !keep.has(p.id))
+
+  if (removable.length) {
+    const { error: delErr } = await db
+      .from('job_postings')
+      .delete()
+      .in('id', removable.map(p => p.id))
+    if (delErr) {
+      console.warn(`Could not retire superseded postings: ${delErr.message}`)
+      return
+    }
+  }
+  console.log(
+    `Fingerprint convergence: retired ${removable.length} duplicate row(s) from the previous scheme` +
+      (keep.size ? `; kept ${keep.size} with an application attached` : '')
+  )
 }
 
 // ---------- closed-posting detection ----------
@@ -493,13 +585,48 @@ async function main() {
     // precisely because the id is what changes on re-import.
     const { data: dismissedRows, error: dismissedErr } = await db
       .from('job_dismissed')
-      .select('fingerprint')
+      .select('fingerprint, title, company, reason')
     if (dismissedErr) {
       // Fail loudly. Carrying on would silently resurrect every role that was
       // ever thrown away, which is worse than a failed run.
       throw new Error(`Could not load the dismissed list: ${dismissedErr.message}`)
     }
-    const dismissed = new Set((dismissedRows || []).map(r => r.fingerprint))
+
+    // Dismissals are keyed on the fingerprint, so changing how fingerprints
+    // are computed would silently un-dismiss everything thrown away before
+    // the change — the roles would come straight back. The stored title and
+    // company exist for exactly this: re-derive the key with the CURRENT
+    // scheme and honour both. Rows are then rewritten under the new key so
+    // this only has to happen once.
+    const dismissed = new Set()
+    const rekeyed = []
+    for (const d of dismissedRows || []) {
+      dismissed.add(d.fingerprint)
+      if (!d.title) continue
+      const current = fingerprint({ title: d.title, company: d.company })
+      if (current !== d.fingerprint) {
+        dismissed.add(current)
+        rekeyed.push({ old: d.fingerprint, row: { ...d, fingerprint: current } })
+      }
+    }
+    if (rekeyed.length) {
+      const { error: rekeyErr } = await db
+        .from('job_dismissed')
+        .upsert(rekeyed.map(r => r.row), { onConflict: 'fingerprint' })
+      if (rekeyErr) {
+        // Not fatal: `dismissed` already covers both keys for this run, so
+        // nothing resurfaces. It just gets retried next time.
+        console.warn(`Could not re-key dismissed rows: ${rekeyErr.message}`)
+      } else {
+        // Only drop the superseded rows once the new ones are safely stored.
+        const { error: dropErr } = await db
+          .from('job_dismissed')
+          .delete()
+          .in('fingerprint', rekeyed.map(r => r.old))
+        if (dropErr) console.warn(`Could not drop superseded dismissals: ${dropErr.message}`)
+        console.log(`Re-keyed ${rekeyed.length} dismissal(s) onto the current fingerprint scheme`)
+      }
+    }
     if (dismissed.size) {
       const before = unique.length
       unique = unique.filter(j => !dismissed.has(j.fingerprint))
@@ -587,6 +714,9 @@ async function main() {
       console.log(`Confirmed-dead links kept hidden: ${sameUrl.length}` +
         (newUrl.length ? ` (${newUrl.length} relinked, will be re-checked)` : ''))
     }
+
+    // ---- retire rows written under an older fingerprint scheme ----
+    await convergeLegacyFingerprints(db, new Set(rows.map(r => r.fingerprint)))
 
     // ---- close anything its own ATS board has stopped listing ----
     // Runs before scoring so a role that has already been taken down never
