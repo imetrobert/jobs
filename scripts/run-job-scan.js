@@ -138,6 +138,31 @@ function indexCompleteBoard(index, src, rows) {
 
 // ---------- helpers ----------
 
+// Supabase caps a single REST response — 1000 rows by default. Past that the
+// response is silently TRUNCATED: no error, no warning, just fewer rows than
+// you asked for. Every full-table read below outgrows that eventually, and
+// when it does the failure is invisible and specific in an unhelpful way: the
+// scorer decides most postings are already scored, the link checker cannot
+// find their scores so skips them, and the board and convergence passes see
+// only a prefix of the table. Nothing errors. The run reports success.
+//
+// So no query that can return "all of them" is written as a bare select.
+// `build()` must return a fresh builder each call, because a PostgREST query
+// object cannot be re-ranged once executed.
+const PAGE_SIZE = 1000
+
+async function selectAll(build) {
+  const out = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await build().range(from, from + PAGE_SIZE - 1)
+    if (error) return { data: null, error }
+    out.push(...(data || []))
+    // A short page is the last page. An exactly-full one might not be.
+    if (!data || data.length < PAGE_SIZE) break
+  }
+  return { data: out, error: null }
+}
+
 function normalize(s) {
   return String(s || '')
     .toLowerCase()
@@ -229,9 +254,9 @@ function buildLocations(profile) {
  * out the ordinary way instead. Never throws.
  */
 async function convergeLegacyFingerprints(db, writtenThisRun) {
-  const { data: existing, error } = await db
-    .from('job_postings')
-    .select('id, title, company, fingerprint')
+  const { data: existing, error } = await selectAll(() =>
+    db.from('job_postings').select('id, title, company, fingerprint')
+  )
   if (error) {
     console.warn(`Fingerprint convergence skipped — could not list postings: ${error.message}`)
     return
@@ -243,10 +268,9 @@ async function convergeLegacyFingerprints(db, writtenThisRun) {
   })
   if (!stale.length) return
 
-  const { data: tracked, error: appErr } = await db
-    .from('job_applications')
-    .select('posting_id')
-    .in('posting_id', stale.map(p => p.id))
+  const { data: tracked, error: appErr } = await selectAll(() =>
+    db.from('job_applications').select('posting_id').in('posting_id', stale.map(p => p.id))
+  )
   if (appErr) {
     console.warn(`Fingerprint convergence skipped — could not check applications: ${appErr.message}`)
     return
@@ -287,35 +311,69 @@ async function convergeLegacyFingerprints(db, writtenThisRun) {
  */
 async function closeMissingFromBoards(db, boardIndex, stats) {
   if (!boardIndex.size) return
-  const { data: postings, error } = await db
-    .from('job_postings')
-    .select('id, title, company, url, source_ids')
-    .eq('stale', false)
+  const { data: postings, error } = await selectAll(() =>
+    db.from('job_postings').select('id, title, company, url, source_ids').eq('stale', false)
+  )
   if (error) {
     console.warn(`Closed-posting check skipped — could not list postings: ${error.message}`)
     return
   }
 
   const closed = []
+  const confirmed = []
   for (const p of postings) {
     for (const [board, stillListed] of boardIndex) {
       const id = p.source_ids?.[board]
       // This posting never came from that board — it says nothing either way.
       if (id == null) continue
-      if (stillListed.has(String(id))) continue
-      // The ATS is the employer's own system and outranks any aggregator that
-      // is still syndicating this role: if the board dropped it, it is closed.
-      closed.push({ posting: p, board })
+      if (stillListed.has(String(id))) {
+        // Present in the board we just pulled in full. That is the strongest
+        // evidence of an open role available anywhere here — the employer's
+        // own system is advertising it right now — and it was being thrown
+        // away: the row fell through to the HTTP check, which on Ashby reads
+        // a client-rendered page, finds nothing, and records "unknown". So
+        // every Ashby posting sat there marked unverified while the board
+        // said plainly that it was live.
+        confirmed.push({ posting: p, board })
+      } else {
+        // The ATS is the employer's own system and outranks any aggregator
+        // still syndicating this role: if the board dropped it, it is closed.
+        closed.push({ posting: p, board })
+      }
       break
     }
   }
+
+  const checkedAt = new Date().toISOString()
+
+  // Recording the timestamp also keeps the HTTP pass from spending budget
+  // re-checking these: it skips anything verified recently at the same URL.
+  let verified = 0
+  for (let i = 0; i < confirmed.length; i += 20) {
+    const settled = await Promise.all(
+      confirmed.slice(i, i + 20).map(({ posting, board }) =>
+        db
+          .from('job_postings')
+          .update({
+            link_status: 'live',
+            link_note: `still listed on the ${board} job board`,
+            link_checked_at: checkedAt,
+            link_checked_url: posting.url,
+          })
+          .eq('id', posting.id)
+      )
+    )
+    for (const { error: upErr } of settled) {
+      if (upErr) console.warn(`  could not confirm a listed posting: ${upErr.message}`)
+      else verified++
+    }
+  }
+  if (verified) console.log(`Board check: ${verified} postings confirmed still listed by their own ATS.`)
 
   if (!closed.length) {
     console.log(`Closed-posting check: every posting on ${boardIndex.size} board(s) is still listed.`)
     return
   }
-
-  const checkedAt = new Date().toISOString()
   let written = 0
   for (let i = 0; i < closed.length; i += 20) {
     const chunk = closed.slice(i, i + 20)
@@ -366,17 +424,21 @@ async function verifyPostingLinks(db, stats) {
     console.log('Link check disabled (MAX_LINK_CHECKS_PER_RUN=0).')
     return
   }
-  const { data: postings, error } = await db
-    .from('job_postings')
-    .select('id, title, company, url, link_checked_at, link_checked_url')
-    .eq('stale', false)
-    .not('url', 'is', null)
+  const { data: postings, error } = await selectAll(() =>
+    db
+      .from('job_postings')
+      .select('id, title, company, url, link_checked_at, link_checked_url')
+      .eq('stale', false)
+      .not('url', 'is', null)
+  )
   if (error) {
     console.warn(`Link check skipped — could not list postings: ${error.message}`)
     return
   }
 
-  const { data: matchRows, error: matchErr } = await db.from('job_matches').select('posting_id, score')
+  const { data: matchRows, error: matchErr } = await selectAll(() =>
+    db.from('job_matches').select('posting_id, score')
+  )
   if (matchErr) {
     console.warn(`Link check skipped — could not list scores: ${matchErr.message}`)
     return
@@ -583,9 +645,9 @@ async function main() {
     // re-scored (an LLM call), and back in the list within the hour. The
     // suppression list is keyed on fingerprint rather than posting id
     // precisely because the id is what changes on re-import.
-    const { data: dismissedRows, error: dismissedErr } = await db
-      .from('job_dismissed')
-      .select('fingerprint, title, company, reason')
+    const { data: dismissedRows, error: dismissedErr } = await selectAll(() =>
+      db.from('job_dismissed').select('fingerprint, title, company, reason')
+    )
     if (dismissedErr) {
       // Fail loudly. Carrying on would silently resurrect every role that was
       // ever thrown away, which is worse than a failed run.
@@ -687,10 +749,9 @@ async function main() {
     // the same role at a better link (an ATS page replacing an aggregator's),
     // the old verdict says nothing about the new URL, so it is cleared and the
     // row is re-checked below.
-    const { data: deadRows, error: deadErr } = await db
-      .from('job_postings')
-      .select('id, url, link_checked_url')
-      .eq('link_status', 'dead')
+    const { data: deadRows, error: deadErr } = await selectAll(() =>
+      db.from('job_postings').select('id, url, link_checked_url').eq('link_status', 'dead')
+    )
     if (deadErr) {
       console.warn(`Could not re-apply confirmed-dead links: ${deadErr.message}`)
     } else if (deadRows.length) {
@@ -727,16 +788,18 @@ async function main() {
     // Two plain queries rather than an embedded "is null" filter — the
     // anti-join form is easy to get subtly wrong in PostgREST and silently
     // returns everything, which would re-score the whole table every run.
-    const { data: live, error: liveErr } = await db
-      .from('job_postings')
-      .select('*')
-      .eq('stale', false)
-      .order('posted_at', { ascending: false, nullsFirst: false })
+    const { data: live, error: liveErr } = await selectAll(() =>
+      db
+        .from('job_postings')
+        .select('*')
+        .eq('stale', false)
+        .order('posted_at', { ascending: false, nullsFirst: false })
+    )
     if (liveErr) throw new Error(`Could not list postings: ${liveErr.message}`)
 
-    const { data: scoredRows, error: scoredErr } = await db
-      .from('job_matches')
-      .select('posting_id')
+    const { data: scoredRows, error: scoredErr } = await selectAll(() =>
+      db.from('job_matches').select('posting_id')
+    )
     if (scoredErr) throw new Error(`Could not list existing matches: ${scoredErr.message}`)
 
     const alreadyScored = new Set((scoredRows || []).map(r => r.posting_id))
@@ -855,11 +918,13 @@ async function main() {
     // A stronger, immediate signal than "stopped appearing in feeds" —
     // straight from the posting's own text, when it states one at all.
     const today = new Date().toISOString().slice(0, 10)
-    const { data: expired, error: expiredErr } = await db
-      .from('job_matches')
-      .select('posting_id')
-      .not('application_deadline', 'is', null)
-      .lt('application_deadline', today)
+    const { data: expired, error: expiredErr } = await selectAll(() =>
+      db
+        .from('job_matches')
+        .select('posting_id')
+        .not('application_deadline', 'is', null)
+        .lt('application_deadline', today)
+    )
     if (expiredErr) {
       console.warn(`Could not check deadline-expired postings: ${expiredErr.message}`)
     } else if (expired.length) {
