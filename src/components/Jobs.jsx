@@ -94,12 +94,22 @@ export default function Jobs({ session }) {
     // reveals both together; there's no case for treating "ambiguous" as
     // more trustworthy than "confirmed not workable, but a great fit."
     if (!showNegotiable) jobsQuery = jobsQuery.not('location_fit', 'in', '(not_montreal,remote_unclear)')
-    const [{ data: rows, error: jobsErr }, { data: runs }] = await Promise.all([
+    const [{ data: rows, error: jobsErr }, { data: runs }, { data: dismissedRows }] = await Promise.all([
       jobsQuery,
       supabase.from('job_runs').select('*').order('started_at', { ascending: false }).limit(1),
+      supabase.from('job_dismissed').select('fingerprint'),
     ])
     if (jobsErr) setError(jobsErr.message)
-    else setJobs(rows || [])
+    // A dismissed role should vanish the moment you dismiss it, even if the
+    // DELETE itself was refused — row-level security can turn that into a
+    // silent no-op, and the whole point of the button is that the role goes
+    // away. The suppression row is written first and is the thing that
+    // actually decides visibility here; the delete and the scan's sweep are
+    // how the row eventually stops existing.
+    else {
+      const dismissed = new Set((dismissedRows || []).map(r => r.fingerprint))
+      setJobs(dismissed.size ? (rows || []).filter(j => !dismissed.has(j.fingerprint)) : rows || [])
+    }
     const run = runs?.[0] || null
     setLastRun(run)
     setLoading(false)

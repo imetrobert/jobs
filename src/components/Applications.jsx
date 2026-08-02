@@ -10,12 +10,18 @@ export default function Applications() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase
-      .from('job_ranked')
-      .select('*')
-      .not('app_status', 'is', null)
-      .order('score', { ascending: false })
-    setRows(data || [])
+    const [{ data }, { data: dismissedRows }] = await Promise.all([
+      supabase
+        .from('job_ranked')
+        .select('*')
+        .not('app_status', 'is', null)
+        .order('score', { ascending: false }),
+      supabase.from('job_dismissed').select('fingerprint'),
+    ])
+    // Same filter as Matches: dismissed means gone from everywhere, including
+    // here, whether or not the underlying delete was permitted.
+    const dismissed = new Set((dismissedRows || []).map(r => r.fingerprint))
+    setRows(dismissed.size ? (data || []).filter(r => !dismissed.has(r.fingerprint)) : data || [])
     setLoading(false)
   }, [])
 
