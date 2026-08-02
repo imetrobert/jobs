@@ -377,6 +377,14 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .link-unknown { background: rgba(210, 153, 34, .16); color: var(--warn); }
 .link-unchecked { background: rgba(139, 148, 158, .16); color: var(--muted); }
 
+/* Two-step confirm before removing a source. Deliberately loud — it sits
+   under a row whose "Disable" button looks nearly identical and is the
+   reversible option, which is the mistake this exists to catch. */
+.confirm-row td { background: var(--panel-2); }
+.confirm-box { padding: 4px 2px 8px; display: grid; gap: 8px; }
+.confirm-box p { margin: 0; }
+.confirm-box .row { margin-top: 2px; }
+
 /* Result of actually opening the posting URL during the last scan. Quiet by
    design — this is a footnote on a link, not a verdict on the role. */
 .link-note { margin: 10px 0 0; padding-left: 10px; border-left: 3px solid var(--line); }
