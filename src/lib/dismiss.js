@@ -30,27 +30,30 @@ export async function dismissPosting(job, reason) {
   )
   if (markErr) throw new Error(`Could not record the dismissal: ${markErr.message}`)
 
-  // `.select()` is what makes this trustworthy. A DELETE that row-level
-  // security refuses does NOT come back as an error: PostgREST answers 204 No
-  // Content having removed nothing, and supabase-js reports error: null. The
-  // first version of this trusted that, so a blocked delete looked exactly
-  // like a successful one — the button said "Deleting…", nothing failed, and
-  // the posting was still sitting there afterwards.
-  //
-  // Asking for the deleted rows back turns silence into an answer: an empty
-  // array means the database declined, and that is reported rather than
-  // celebrated.
-  const { data: removed, error: delErr } = await supabase
-    .from('job_postings')
-    .delete()
-    .eq('id', job.id)
-    .select('id')
+  const { error: delErr } = await supabase.from('job_postings').delete().eq('id', job.id)
   if (delErr) throw new Error(`Recorded, but could not delete it yet: ${delErr.message}`)
-  if (!removed || removed.length === 0) {
+
+  // A DELETE that row-level security refuses is NOT an error: PostgREST
+  // answers 204 No Content having removed nothing, and supabase-js reports
+  // error: null. So a blocked delete is indistinguishable from a real one
+  // unless you go and look — which is why the button once said "Deleting…",
+  // reported no failure, and left the posting sitting there.
+  //
+  // The check reads back through job_ranked rather than asking DELETE for a
+  // RETURNING clause. Postgres applies SELECT policies to RETURNING, and this
+  // install has none on job_postings — reads go through the view, which runs
+  // with its owner's rights. Verifying via the same path the app already
+  // reads by is the one that cannot fail for a reason unrelated to the delete.
+  const { count, error: checkErr } = await supabase
+    .from('job_ranked')
+    .select('id', { count: 'exact', head: true })
+    .eq('id', job.id)
+  if (checkErr) return // can't verify; the scan's sweep is the backstop
+  if (count) {
     throw new Error(
-      'The database refused to delete this posting — row-level security removed nothing. ' +
-        'It is recorded as dismissed, so it will disappear from this list and the next scan ' +
-        'will clear it, but re-run supabase/schema.sql to fix the delete policy.'
+      'The database would not delete this posting — the delete was refused and nothing was removed. ' +
+        'It is recorded as dismissed, so it has gone from your lists and the next scan will clear ' +
+        'the row, but the delete policy on job_postings needs fixing.'
     )
   }
 }
