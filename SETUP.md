@@ -414,6 +414,15 @@ A posting confirmed dead stays hidden even though the aggregator keeps
 re-listing it — but only while the URL is unchanged. If a later scan finds the
 same role at a better link, the old verdict is cleared and it gets re-checked.
 
+**Rate limits are respected, and hopeless hosts are dropped.** A host that
+answers `403` or `429` gets its own delay doubled (up to 8s) and the posting
+retried once at that slower pace — which is what most of Adzuna's refusals
+turn out to be, since they scaled with volume while its geographic blocks did
+not. A host that refuses 12 in a row *without ever answering one* is skipped
+for the rest of the run: Jooble refuses everything, so continuing to ask costs
+minutes and learns nothing. Those postings still come back `unknown`, which is
+what they would have been anyway, with a note saying they were not attempted.
+
 The page fetches are plain page loads: no API key, no quota, nothing to pay
 for. They are the slowest part of a scan, so `MAX_LINK_CHECKS_PER_RUN`
 (default 600) caps them, spending the budget on the highest-scoring roles

@@ -37,6 +37,17 @@ const DEFAULT_CONCURRENCY = 6
 // Minimum gap between two requests to the same host. Aggregator-heavy runs
 // would otherwise fire the whole batch at jooble.org at once.
 const PER_HOST_DELAY_MS = 600
+// A host that starts refusing gets progressively more room before we try it
+// again. Adzuna is the case this exists for: at 150 checks a run it refused
+// 14 postings, at 524 it refused 120 — the refusals scaled with volume while
+// its geographic blocks did not, which is rate limiting, not policy.
+const MAX_HOST_DELAY_MS = 8_000
+// A host that has refused this many requests in a row WITHOUT ever answering
+// one this run is not going to start. Jooble is the case this exists for: it
+// refuses every request, so continuing to ask costs minutes per run and
+// learns nothing. The remainder are reported unasked, with a note saying so —
+// they are still 'unknown', which is what they would have been anyway.
+const ABANDON_HOST_AFTER = 12
 // Enough to cover any expiry banner, which is always near the top of the
 // document. Reading megabytes of a careers-site SPA bundle buys nothing.
 const MAX_BODY_CHARS = 120_000
@@ -180,7 +191,7 @@ export function classifyResponse({ requestUrl, finalUrl, status, body = '' }) {
 /** Fetch one posting URL and classify it. Never throws. */
 export async function checkLink(url, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   if (!url || !/^https?:\/\//i.test(url)) {
-    return { status: 'unknown', note: 'no usable URL on this posting' }
+    return { status: 'unknown', note: 'no usable URL on this posting', httpStatus: 0 }
   }
   const control = new AbortController()
   const timer = setTimeout(() => control.abort(), timeoutMs)
@@ -198,10 +209,10 @@ export async function checkLink(url, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     } catch {
       /* body unreadable — the status code still classifies most cases */
     }
-    return classifyResponse({ requestUrl: url, finalUrl: res.url, status: res.status, body })
+    return { ...classifyResponse({ requestUrl: url, finalUrl: res.url, status: res.status, body }), httpStatus: res.status }
   } catch (err) {
     const reason = err?.name === 'AbortError' ? `no response in ${Math.round(timeoutMs / 1000)}s` : err.message
-    return { status: 'unknown', note: `could not reach the page (${reason})` }
+    return { status: 'unknown', note: `could not reach the page (${reason})`, httpStatus: 0 }
   } finally {
     clearTimeout(timer)
   }
@@ -230,20 +241,71 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 export async function verifyLinks(postings, opts = {}) {
   const { concurrency = DEFAULT_CONCURRENCY, timeoutMs = DEFAULT_TIMEOUT_MS, onResult } = opts
   const results = []
-  const lastHit = new Map()
+  // Per host: how long to leave between requests, when it was last hit, and
+  // whether it has ever answered one this run.
+  const hosts = new Map()
   let next = 0
+
+  const stateFor = host => {
+    if (!hosts.has(host)) {
+      hosts.set(host, { delay: PER_HOST_DELAY_MS, lastHit: 0, answered: 0, refusedInARow: 0, abandoned: false })
+    }
+    return hosts.get(host)
+  }
+
+  // Reserve this host's next slot before releasing the worker, so two workers
+  // cannot both decide they are clear to go.
+  async function waitTurn(state) {
+    const wait = state.lastHit + state.delay - Date.now()
+    state.lastHit = Date.now() + Math.max(0, wait)
+    if (wait > 0) await sleep(wait)
+  }
+
+  const isRefusal = r => r.httpStatus === 403 || r.httpStatus === 429
 
   async function worker() {
     while (next < postings.length) {
       const posting = postings[next++]
       const host = hostOf(posting.url)
-      // Space out same-host requests without stalling the other workers on
-      // a different host.
-      const wait = (lastHit.get(host) || 0) + PER_HOST_DELAY_MS - Date.now()
-      lastHit.set(host, Date.now() + Math.max(0, wait))
-      if (wait > 0) await sleep(wait)
+      const state = stateFor(host)
 
-      const result = await checkLink(posting.url, { timeoutMs })
+      if (state.abandoned) {
+        const result = {
+          status: 'unknown',
+          note: `not attempted — ${host} refused every request this run`,
+        }
+        results.push({ posting, ...result })
+        onResult?.(posting, result)
+        continue
+      }
+
+      await waitTurn(state)
+      let result = await checkLink(posting.url, { timeoutMs })
+
+      if (isRefusal(result)) {
+        // Back off for this host specifically, then give the posting one more
+        // go at the slower pace. A rate limit answers the retry; a policy
+        // block answers it exactly the same way, which is what the abandon
+        // counter below is for.
+        state.delay = Math.min(state.delay * 2, MAX_HOST_DELAY_MS)
+        await waitTurn(state)
+        result = await checkLink(posting.url, { timeoutMs })
+      }
+
+      if (isRefusal(result)) {
+        state.refusedInARow++
+        if (state.answered === 0 && state.refusedInARow >= ABANDON_HOST_AFTER) {
+          state.abandoned = true
+          console.warn(
+            `  ${host}: refused ${state.refusedInARow} requests and answered none — ` +
+              `skipping the rest of its postings this run`
+          )
+        }
+      } else {
+        state.answered++
+        state.refusedInARow = 0
+      }
+
       results.push({ posting, ...result })
       onResult?.(posting, result)
     }
