@@ -30,6 +30,27 @@ export async function dismissPosting(job, reason) {
   )
   if (markErr) throw new Error(`Could not record the dismissal: ${markErr.message}`)
 
-  const { error: delErr } = await supabase.from('job_postings').delete().eq('id', job.id)
+  // `.select()` is what makes this trustworthy. A DELETE that row-level
+  // security refuses does NOT come back as an error: PostgREST answers 204 No
+  // Content having removed nothing, and supabase-js reports error: null. The
+  // first version of this trusted that, so a blocked delete looked exactly
+  // like a successful one — the button said "Deleting…", nothing failed, and
+  // the posting was still sitting there afterwards.
+  //
+  // Asking for the deleted rows back turns silence into an answer: an empty
+  // array means the database declined, and that is reported rather than
+  // celebrated.
+  const { data: removed, error: delErr } = await supabase
+    .from('job_postings')
+    .delete()
+    .eq('id', job.id)
+    .select('id')
   if (delErr) throw new Error(`Recorded, but could not delete it yet: ${delErr.message}`)
+  if (!removed || removed.length === 0) {
+    throw new Error(
+      'The database refused to delete this posting — row-level security removed nothing. ' +
+        'It is recorded as dismissed, so it will disappear from this list and the next scan ' +
+        'will clear it, but re-run supabase/schema.sql to fix the delete policy.'
+    )
+  }
 }
