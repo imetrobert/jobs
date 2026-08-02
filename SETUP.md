@@ -8,7 +8,7 @@ Built to sit alongside your invoicing and ETF apps on the **same Supabase projec
 — same login, tables namespaced `job_` so they can't collide.
 
 ```
-1st of the month (or you click "Refresh now")
+You click "Refresh now" (there is no schedule — scans are on demand)
     │
     ▼
 job-scan.yml runs
@@ -68,8 +68,8 @@ the `job_` prefix keeps it clear of your invoicing and `etf_` tables.
 Adzuna alone is enough to start. Skip JSearch unless you specifically want
 LinkedIn/Indeed rows.
 
-A monthly scan uses roughly 20–40 Adzuna calls, so the free tier has ample room
-even with on-demand refreshes.
+A scan uses roughly 20–40 Adzuna calls, so the free tier has ample room even
+if you refresh several times a day.
 
 ### 3. The scorer — Gemini, free tier
 
@@ -92,7 +92,7 @@ The design is sized to stay inside Gemini's free tier rather than merely tolerat
 | **Graceful daily-quota stop** | If the daily quota does run out, the scan saves everything scored so far, logs why, and finishes the rest on the next run. It does not fail. |
 | **`MAX_SCORES_PER_RUN`** (default 120) | Hard ceiling per run. |
 
-A typical monthly scan is **around 24 Gemini requests over roughly three
+A typical scan is **around 24 Gemini requests over roughly three
 minutes**, plus one request each time you draft a cover letter. Against a
 free-tier daily allowance measured in hundreds of requests, that leaves ample
 headroom even with several on-demand refreshes in the same day.
@@ -432,7 +432,7 @@ the ATS board check above is unaffected, since it costs nothing.
 
 That default lives in exactly one place: the `max_link_checks` input default in
 `job-scan.yml`. The app's **Refresh now** button sends only `trigger`, so it
-inherits the same number, and so does the monthly cron. Change it there and
+inherits the same number. Change it there and
 every path changes with it.
 
 **Triage from the list, without opening anything.** Every card carries a pill in
@@ -578,7 +578,7 @@ hunting, the ordering changes:
   detour from it. The tailored CVs the app generates are also useful raw
   material: they show which parts of your history land hardest against real
   postings.
-- **Let the monthly scan run in the background.** The value isn't any single
+- **Refresh every week or two, even when you're not looking.** The value isn't any single
   month's list — it's that the market picture and your document drafts are already
   warm on the day you need them, instead of starting cold.
 - **Pre-draft documents for anything scoring "exceptional" or "strong".** They're
@@ -704,7 +704,7 @@ jobs-app/
 │   ├── schema.sql                job_* tables, RLS, the job_ranked view
 │   └── functions/generate-application/   cover letter + CV edge function
 └── .github/workflows/
-    ├── job-scan.yml              monthly cron + on-demand dispatch
+    ├── job-scan.yml              on-demand dispatch (no schedule)
     └── deploy.yml                build and publish to Pages
 ```
 

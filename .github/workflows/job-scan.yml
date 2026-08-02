@@ -1,10 +1,20 @@
 name: Job scan
 
-# Monthly on the 1st, plus on demand — either from the Actions tab or from the
-# "Refresh now" button in the app, which dispatches this workflow.
+# On demand only — either from the Actions tab or from the "Refresh now"
+# button in the app, which dispatches this workflow.
+#
+# There is deliberately NO schedule. Scoring is the only part with a running
+# cost, and a scan only scores postings it has never scored before, so an
+# unattended run is free when nothing new arrived and spends quota when
+# something did — without anyone there to look at the result. Running it when
+# you actually want to read the list keeps that spend deliberate.
+#
+# The trade: nothing ages out and no link is re-verified between runs, so a
+# list left alone for weeks goes quietly stale. Hit Refresh before trusting it
+# after a gap. To put the schedule back, restore:
+#   schedule:
+#     - cron: '0 11 1 * *'   # 11:00 UTC on the 1st of each month
 on:
-  schedule:
-    - cron: '0 11 1 * *'
   workflow_dispatch:
     inputs:
       trigger:
