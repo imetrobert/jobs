@@ -302,50 +302,99 @@ alter table job_matches enable row level security;
 alter table job_applications enable row level security;
 alter table job_runs enable row level security;
 
+-- `to authenticated using (true)` is NOT a restriction on this install. The
+-- Supabase project is shared with five other apps, and Supabase Auth is
+-- per-project: an account created for any of them can sign in here. "Any
+-- authenticated user" therefore means anyone with an account on any of those
+-- apps, not the owner of this one.
+--
+-- Access is granted per app instead, in the project's app_access table, and
+-- checked by has_app_access(). See the Supabase-platform- repo.
+
+do $$ begin
+  if to_regprocedure('public.has_app_access(text)') is null then
+    raise exception
+      'has_app_access(text) is missing. Run app_access_pattern.sql from the '
+      'Supabase-platform- repo against this project first, or these policies '
+      'would reference a function that does not exist and lock everyone out.';
+  end if;
+end $$;
+
 drop policy if exists "job_profile_auth" on job_profile;
-create policy "job_profile_auth" on job_profile
-  for all to authenticated using (true) with check (true);
+drop policy if exists "job_profile all (job)" on job_profile;
+create policy "job_profile all (job)" on job_profile
+  for all to authenticated
+  using (public.has_app_access('job')) with check (public.has_app_access('job'));
 
 drop policy if exists "job_sources_auth" on job_sources;
-create policy "job_sources_auth" on job_sources
-  for all to authenticated using (true) with check (true);
+drop policy if exists "job_sources all (job)" on job_sources;
+create policy "job_sources all (job)" on job_sources
+  for all to authenticated
+  using (public.has_app_access('job')) with check (public.has_app_access('job'));
 
 drop policy if exists "job_applications_auth" on job_applications;
-create policy "job_applications_auth" on job_applications
-  for all to authenticated using (true) with check (true);
+drop policy if exists "job_applications all (job)" on job_applications;
+create policy "job_applications all (job)" on job_applications
+  for all to authenticated
+  using (public.has_app_access('job')) with check (public.has_app_access('job'));
 
 drop policy if exists "job_dismissed_auth" on job_dismissed;
-create policy "job_dismissed_auth" on job_dismissed
-  for all to authenticated using (true) with check (true);
+drop policy if exists "job_dismissed all (job)" on job_dismissed;
+create policy "job_dismissed all (job)" on job_dismissed
+  for all to authenticated
+  using (public.has_app_access('job')) with check (public.has_app_access('job'));
 
--- Postings, matches and runs are written only by the scan job (service
--- role). The app reads them.
+-- Postings, matches and runs are written only by the scan job, which uses the
+-- service role and bypasses RLS entirely. The app only reads them.
 drop policy if exists "job_postings_read" on job_postings;
-create policy "job_postings_read" on job_postings
-  for select to authenticated using (true);
+drop policy if exists "job_postings select (job)" on job_postings;
+create policy "job_postings select (job)" on job_postings
+  for select to authenticated using (public.has_app_access('job'));
 
--- ...with one exception: throwing a role away deletes the posting outright,
--- and that happens from the browser. DELETE only — the app still cannot
--- INSERT or UPDATE a posting, so nothing here lets it edit scan results.
--- The cascade to job_matches and job_applications is a referential action,
--- run by the system rather than by this role, so those stay read-only too.
+-- There is deliberately NO delete policy on job_postings.
+--
+-- There used to be one, so the dismiss button could delete the posting. That
+-- was a mistake: job_matches and job_applications both cascade from
+-- job_postings, so dismissing a role destroyed its match write-up, its
+-- application status and any generated cover letter — and on a shared project,
+-- everyone else's too, since the posting is one shared row.
+--
+-- Dismissing now writes only the suppression row in job_dismissed, which is
+-- what made a role disappear all along: the app filters against it and the scan
+-- refuses to re-import anything in it. Nothing in the browser deletes a posting
+-- any more, and with no policy here nothing can.
 drop policy if exists "job_postings_dismiss" on job_postings;
-create policy "job_postings_dismiss" on job_postings
-  for delete to authenticated using (true);
+drop policy if exists "job_postings delete (job)" on job_postings;
 
 drop policy if exists "job_matches_read" on job_matches;
-create policy "job_matches_read" on job_matches
-  for select to authenticated using (true);
+drop policy if exists "job_matches select (job)" on job_matches;
+create policy "job_matches select (job)" on job_matches
+  for select to authenticated using (public.has_app_access('job'));
 
 drop policy if exists "job_runs_read" on job_runs;
-create policy "job_runs_read" on job_runs
-  for select to authenticated using (true);
+drop policy if exists "job_runs select (job)" on job_runs;
+create policy "job_runs select (job)" on job_runs
+  for select to authenticated using (public.has_app_access('job'));
 
 -- ---------------------------------------------------------------------
 -- Convenience view: ranked jobs with their match verdict and pipeline
 -- status in one shot, so the dashboard is a single query.
 -- ---------------------------------------------------------------------
-create or replace view job_ranked as
+-- security_invoker is load-bearing, not a detail.
+--
+-- Without it a view runs with its OWNER's rights, so the policies on the tables
+-- underneath are evaluated as the owner and effectively skipped. This view was
+-- created that way and granted to authenticated, which meant every job_* table
+-- was correctly gated and all 1,337 postings, match write-ups and application
+-- statuses were readable straight through the view by accounts with no grant
+-- for this app. Policies protect tables; they do not protect a definer view
+-- sitting on top of them.
+--
+-- With it, the view defers to whoever is querying, and the has_app_access
+-- policies above apply. That is why job_postings needs the SELECT policy above:
+-- the app reaches postings only through this view, so before, no policy was
+-- needed and none existed.
+create or replace view job_ranked with (security_invoker = true) as
 select
   p.id,
   p.title,
@@ -415,8 +464,9 @@ from job_postings p
 left join job_matches m on m.posting_id = p.id
 left join job_applications a on a.posting_id = p.id;
 
--- Views run with the definer's rights; the underlying tables are still
--- RLS-protected, and anon has no grant here.
+-- Both halves matter. The grant keeps anon out; security_invoker above is what
+-- makes the grant to authenticated mean "and then the table policies apply"
+-- rather than "and then read everything as the owner".
 revoke all on job_ranked from anon;
 grant select on job_ranked to authenticated;
 

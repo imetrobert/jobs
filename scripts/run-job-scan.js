@@ -695,14 +695,15 @@ async function main() {
       if (before !== unique.length) {
         console.log(`Suppressed: ${before - unique.length} re-imported roles you had thrown away`)
       }
-      // Sweep up drift: a posting whose delete failed after its suppression
-      // row was written (see lib/dismiss.js — the order there means this is
-      // the recoverable half), or one dismissed while a scan was mid-flight.
-      const { error: sweepErr } = await db
-        .from('job_postings')
-        .delete()
-        .in('fingerprint', [...dismissed])
-      if (sweepErr) console.warn(`Could not sweep dismissed postings: ${sweepErr.message}`)
+      // Dismissed postings are deliberately left in job_postings. The filter
+      // above already keeps them from being re-imported or re-scored, and the
+      // app filters them out of every list, so the row is inert.
+      //
+      // Deleting it would not be tidying up: job_matches and job_applications
+      // both cascade from job_postings, so sweeping a dismissed posting throws
+      // away its match write-up, its application status and any generated
+      // cover letter — for every user of this project, not just whoever
+      // dismissed it. See lib/dismiss.js.
     }
 
     // ---- persist postings ----

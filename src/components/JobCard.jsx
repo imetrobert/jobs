@@ -389,12 +389,14 @@ export default function JobCard({ job, onChanged }) {
 
           {/* The two ways a role stops being worth looking at, one click each
               and sitting right under the link — because that is where you
-              find out. These DELETE the posting rather than filing it under a
+              find out. These suppress the role rather than filing it under a
               status: a status still has to be shown somewhere, and the point
-              is that it stops existing. Said plainly above the buttons, since
-              there is no undo in the app. */}
+              is that it stops appearing. Nothing is deleted — the posting and
+              its write-up stay put, filtered out of every list — but there is
+              no undo in the app, so it is still said plainly above the
+              buttons. */}
           <div className="job-dismiss">
-            <span className="muted sm">Delete this role for good:</span>
+            <span className="muted sm">Hide this role for good:</span>
             <span className="row">
               {Object.entries(DISMISS_REASONS).map(([reason, label]) => (
                 <button
@@ -402,9 +404,9 @@ export default function JobCard({ job, onChanged }) {
                   className="btn ghost sm"
                   disabled={busy || Boolean(dismissing)}
                   onClick={() => dismiss(reason)}
-                  title="Deletes the posting and stops future scans re-importing it. Permanent."
+                  title="Hides the role and stops future scans re-importing it. No undo in the app."
                 >
-                  {dismissing === reason ? 'Deleting…' : label}
+                  {dismissing === reason ? 'Hiding…' : label}
                 </button>
               ))}
             </span>

@@ -456,9 +456,20 @@ you find out:
 - **No longer available** — you opened it and the posting is gone.
 - **Not interested** — it's still up, you just don't want it.
 
-Either one **deletes the posting outright**. It disappears from Matches and
-from Pipeline, and the match write-up, keyword analysis and any generated
-documents go with it (they cascade off the posting row).
+Either one **suppresses the role**. It disappears from Matches and from
+Pipeline immediately, and the scan will not re-import it however many times the
+feeds carry it again.
+
+Nothing is deleted. The posting row stays in `job_postings`, inert — filtered
+out of every list and never re-scored — and the match write-up and any
+generated documents stay with it. Dismissing used to delete the posting, which
+also destroyed those, because `job_matches` and `job_applications` cascade off
+the posting row: dismiss a role you had already applied to and your own pipeline
+entry went with it. On a Supabase project shared with other apps it was worse,
+since one person dismissing a role destroyed everyone's verdicts and
+applications for it.
+
+Un-dismissing is a `delete from job_dismissed` — see below.
 
 **Company-name variants are collapsed.** The fingerprint hashes the company
 with legal-entity suffixes stripped from the end (`Inc`, `Ltd`, `LLC`, `Corp`,
