@@ -42,6 +42,35 @@ async function getJSON(url, opts = {}) {
   return res.json()
 }
 
+// POST variant of getJSON for the Workday board endpoint, which only takes
+// a JSON body. Same error detail: the provider's own explanation, not a
+// bare status line.
+async function postJSON(url, body, opts = {}) {
+  const res = await fetch(url, {
+    method: 'POST',
+    ...opts,
+    headers: {
+      'User-Agent': UA,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(opts.headers || {}),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      detail = (await res.text()).replace(/\s+/g, ' ').trim().slice(0, 300)
+    } catch {
+      /* body already consumed or unreadable — status alone will have to do */
+    }
+    throw new Error(
+      `${res.status} ${res.statusText} for ${url.split('?')[0]}${detail ? ` — ${detail}` : ''}`
+    )
+  }
+  return res.json()
+}
+
 function stripHtml(html) {
   if (!html) return ''
   return String(html)
@@ -448,6 +477,92 @@ export async function fetchWorkable({ token, label }) {
   return out
 }
 
+// ---------------------------------------------------------------------
+// Workday — career sites at <tenant>.wd<N>.myworkdayjobs.com/<site> (and
+// the myworkdaysite.com/recruiting/<tenant>/<site> form) load from a POST
+// JSON endpoint, not a GET feed:
+//   POST https://<host>/wday/cxs/<tenant>/<site>/jobs
+//   {"appliedFacets":{},"limit":20,"offset":0,"searchText":""}
+//
+// `token` on the source row is "<host>/<site>" (myworkdayjobs) or
+// "<host>/recruiting/<tenant>/<site>" (myworkdaysite) — the same form the
+// board-URL parser in src/lib/boardUrl.js produces, so a pasted careers URL
+// lands here unchanged.
+//
+// Two constraints that are easy to get silently wrong, so they are stated
+// here rather than left as folklore:
+//   - limit MUST be 20. Higher values return 200 OK with an empty array —
+//     a silent "no roles" that is really "you asked wrong". Never conclude
+//     a board is empty from a response to a limit other than 20.
+//   - Total per site is capped around 2,000 jobs, so the scan searches each
+//     of the profile's target titles (searchText) instead of pulling the
+//     whole board, and paginates by offset in steps of 20. This is also why
+//     Workday is NOT in COMPLETE_BOARD_KINDS in run-job-scan.js: a
+//     searchText-filtered pull is not the whole board, so absence from it
+//     says nothing about whether a role is still open.
+// ---------------------------------------------------------------------
+export async function fetchWorkday({ token, label, queries }) {
+  const parts = String(token || '').split('/').filter(Boolean)
+  const host = parts[0]
+  let tenant
+  let site
+  if (parts[1] === 'recruiting') {
+    tenant = parts[2]
+    site = parts[3]
+  } else {
+    tenant = host ? host.split('.')[0] : null
+    site = parts[1]
+  }
+  if (!host || !tenant || !site) {
+    throw new Error(
+      `Workday token must be "<host>/<site>" (e.g. acme.wd3.myworkdayjobs.com/Careers), got "${token}"`
+    )
+  }
+  const endpoint = `https://${host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/jobs`
+  // Search terms are the profile's target titles, same as every other feed.
+  // Without them a large board would hit the ~2,000-job cap and silently
+  // drop everything past it.
+  const terms = (queries && queries.length ? queries : ['']).slice(0, 8)
+  const seen = new Map()
+  for (const searchText of terms) {
+    let offset = 0
+    // 5 pages x 20 = 100 per term. Fetch volume, not LLM volume: scoring
+    // is capped separately in run-job-scan.js, so a big board can never
+    // turn into more scored postings — only into more candidates for the
+    // prefilter to cut.
+    for (let page = 0; page < 5; page++) {
+      const data = await postJSON(endpoint, { appliedFacets: {}, limit: 20, offset, searchText })
+      const postings = data?.jobPostings || []
+      for (const j of postings) {
+        const id = String(j.jobId || j.externalPath || j.title || '')
+        if (!id || seen.has(id)) continue
+        seen.set(id, {
+          source: `workday:${token}`,
+          source_id: id,
+          title: j.title || '',
+          company: label || tenant,
+          location: j.locationsText || null,
+          remote: looksRemote(`${j.title} ${j.locationsText}`),
+          url: j.externalPath ? `https://${host}${j.externalPath}` : null,
+          // The search response carries no description. The card shows the
+          // title and location and links out; the description arrives only
+          // if the posting page itself is opened. Stating that beats
+          // inventing one.
+          description: '',
+          salary_min: null,
+          salary_max: null,
+          salary_currency: null,
+          posted_at: j.postedOn ? new Date(j.postedOn).toISOString() : null,
+        })
+      }
+      const total = data?.total ?? 0
+      offset += 20
+      if (offset >= total || postings.length < 20) break
+    }
+  }
+  return [...seen.values()]
+}
+
 export const ADAPTERS = {
   adzuna: fetchAdzuna,
   jooble: fetchJooble,
@@ -458,6 +573,7 @@ export const ADAPTERS = {
   smartrecruiters: fetchSmartRecruiters,
   workable: fetchWorkable,
   ashby: fetchAshby,
+  workday: fetchWorkday,
 }
 
 export { stripHtml, looksRemote }
