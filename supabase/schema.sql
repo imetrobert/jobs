@@ -70,7 +70,7 @@ update job_profile
 create table if not exists job_sources (
   id uuid primary key default gen_random_uuid(),
   kind text not null check (kind in
-    ('adzuna','jooble','remotive','jsearch','greenhouse','lever','ashby','smartrecruiters','workable')),
+    ('adzuna','jooble','remotive','jsearch','greenhouse','lever','ashby','smartrecruiters','workable','workday')),
   label text not null,
   token text,
   enabled boolean not null default true,
@@ -221,6 +221,14 @@ create index if not exists job_matches_score_idx on job_matches (score desc);
 
 -- ---------------------------------------------------------------------
 -- Applications: your pipeline, plus generated documents.
+--
+-- Follow-ups live in `notes`, by convention, not by migration: the column
+-- already existed and nothing in the app read or wrote it, so the card
+-- editor owns it (see src/lib/followUp.js). Format is human-readable:
+--   Follow-up: 2026-11-03
+--   <freeform note>
+-- The Pipeline page reads the same column directly (the job_ranked view
+-- does not expose it) and surfaces due/overdue follow-ups first.
 -- ---------------------------------------------------------------------
 create table if not exists job_applications (
   posting_id uuid primary key references job_postings(id) on delete cascade,
