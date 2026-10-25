@@ -420,6 +420,14 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 
 /* ---------- pipeline ---------- */
 .pipeline-group { margin-bottom: 26px; }
+/* Due follow-ups sit above the status groups and look different — an
+   accent bar, not just a heading — so a list skimmed at speed still
+   lands on what needs acting on first. */
+.pipeline-group.followup-due {
+  border-left: 3px solid var(--warn);
+  padding-left: 12px;
+}
+.pipeline-group.followup-due .group-head { color: var(--warn); }
 .group-head {
   font-size: 13px;
   text-transform: uppercase;
