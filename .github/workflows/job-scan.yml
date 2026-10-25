@@ -1,20 +1,29 @@
 name: Job scan
 
-# On demand only — either from the Actions tab or from the "Refresh now"
-# button in the app, which dispatches this workflow.
+# Weekly on Mondays at 11:00 UTC, plus on demand from the Actions tab or
+# from the "Refresh now" button in the app, which dispatches this workflow.
 #
-# There is deliberately NO schedule. Scoring is the only part with a running
-# cost, and a scan only scores postings it has never scored before, so an
-# unattended run is free when nothing new arrived and spends quota when
-# something did — without anyone there to look at the result. Running it when
-# you actually want to read the list keeps that spend deliberate.
+# The schedule used to be deliberately absent: scoring is the only part with
+# a running cost, and an unattended run spends quota without anyone there
+# to look at the result. That trade no longer holds, for two reasons.
+# First, a scan only scores postings it has never scored before, so a week
+# with nothing new costs nothing but the fetches (plain page loads and API
+# calls, no key, no quota, no bill). Second, every scheduled run now
+# writes docs/weekly-digest.md, so the spend is always summarized somewhere
+# a human will actually read it — the result is no longer fire-and-forget.
 #
-# The trade: nothing ages out and no link is re-verified between runs, so a
-# list left alone for weeks goes quietly stale. Hit Refresh before trusting it
-# after a gap. To put the schedule back, restore:
-#   schedule:
-#     - cron: '0 11 1 * *'   # 11:00 UTC on the 1st of each month
+# The remaining staleness note still applies between runs: a list left
+# alone for weeks goes quietly stale. Weekly runs bound that to a week,
+# and the link-verification pass still hides anything that closed.
+#
+# FREE TIER: Gemini usage here must never charge. The scan's per-run LLM
+# budget is MAX_SCORES_PER_RUN / SCORE_BATCH_SIZE (120 / 5 = at most 24
+# requests), enforced by slicing before batching in run-job-scan.js — new
+# sources can change which postings get scored, never how many. The digest
+# step makes zero model calls (plain formatting of rows already scored).
 on:
+  schedule:
+    - cron: '0 11 * * 1'   # Mondays 11:00 UTC
   workflow_dispatch:
     inputs:
       trigger:
@@ -43,7 +52,10 @@ on:
         type: string
 
 permissions:
-  contents: read
+  # Write (not just read) because the digest step commits
+  # docs/weekly-digest.md back to this repo. Nothing else in this file
+  # needs write access; the scan itself only reads Supabase and the feeds.
+  contents: write
 
 # The scan writes postings and matches; two overlapping runs would duplicate
 # LLM spend on the same rows. Queue instead of racing.
@@ -92,6 +104,39 @@ jobs:
           # in exactly one place.
           MAX_LINK_CHECKS_PER_RUN: ${{ inputs.max_link_checks || '600' }}
         run: node scripts/run-job-scan.js
+
+      # Weekly digest: new roles above the display bar, as a plain file in
+      # the repo (docs/weekly-digest.md). Deterministic formatting of rows
+      # the scan already scored — zero model calls, so it adds nothing to
+      # the free-tier budget. It reuses exactly the Supabase credentials
+      # the scan step already uses; no new secrets. continue-on-error on
+      # both steps, so a digest failure can never fail a scan whose
+      # fetching and scoring already succeeded — and the default
+      # if: success() means these steps are skipped entirely when the
+      # scan itself fails, rather than digesting stale data.
+      - name: Generate digest
+        if: success()
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/generate-digest.js
+
+      - name: Commit digest
+        if: success()
+        continue-on-error: true
+        run: |
+          # Only commit when the digest step actually produced a file. If
+          # generation failed, the previous week's file stays as it is —
+          # committing a stale digest as if it were new would be worse
+          # than committing nothing.
+          if [ -f docs/weekly-digest.md ]; then
+            git config user.name "job-scan"
+            git config user.email "job-scan@users.noreply.github.com"
+            git add docs/weekly-digest.md
+            git diff --cached --quiet || git commit -m "Weekly digest"
+            git push
+          fi
 
       - name: Summary
         if: always()
