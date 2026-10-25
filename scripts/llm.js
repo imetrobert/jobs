@@ -13,65 +13,53 @@
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-5'
 
-// Google deprecates Gemini model *names* faster than this file gets edited —
-// gemini-2.5-flash and gemini-2.5-flash-lite went from "the recommended pick"
-// to "404, no longer available to new users" within months, and only for
-// projects created after some cutoff, so an old project can still see a model
-// a new one can't. Hardcoding a chain here just means it goes stale again.
-// Instead, ask the key itself what it can call, once per process, and rank
-// the answer — small/fast ("flash") models first, since this is a free-tier
-// batch scorer, not a reasoning workload.
-const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-2.0-flash']
-let _discoveredModels = null
+// Model selection: PINNED chain, Lite-first — do not go back to asking the
+// key what it can call and ranking newest first. That ranking caused the
+// Oct 25, 2026 scan failure, and the research behind this chain (Oct 25,
+// 2026) explains why: on the free tier a full Flash model gives roughly
+// 20 requests/day — less than one weekly scan (24 calls) — while a Lite
+// model gives roughly 500/day, and the newest Flash is also the model most
+// likely to 503 under load. Chasing "newest Flash first" picks the smallest
+// quota pool and the most congested model first.
+//
+// Never pin these, however tempting an old guide looks: gemini-3.5-flash
+// and gemini-3.7-flash were deprecated Oct 8, 2026 and are silently routed
+// to 3.6/3.8 (the name you pin is not the model answering); gemini-2.0
+// was retired Jun 1, 2026; gemini-2.5 is access-limited since Sep 18, 2026
+// to past users, and ListModels still lists models a new project cannot
+// call — which is exactly why discovery is not trusted in the hot path.
+//
+// Google no longer publishes per-model free-tier numbers; AI Studio's
+// per-project page is the only official source. The figures above are
+// measured (Sep/Oct 2026, new free key), not official, and they vary by
+// project — treat them as the reason for Lite-first, not as exact quotas.
+//
+// Staying on the best model as things change: this chain is the default,
+// not a tombstone. Change it without a code edit through GEMINI_MODEL_CHAIN
+// (comma-separated, in fallback order). A future scheduled canary may
+// RECOMMEND a new chain by probing candidates with real calls — discovery
+// alone never proves a model works — but promotion is always a reviewed
+// config change, never silent auto-switching in the scoring path.
+const DEFAULT_GEMINI_CHAIN = [
+  'gemini-3.5-flash-lite', // primary — the free-tier workhorse
+  'gemini-3.1-flash-lite', // second, separate ~500/day quota pool
+  'gemini-3.8-flash', // only if a Lite model fails for a non-quota reason
+  'gemini-3.6-flash', // last Flash pool
+  'gemini-flash-lite-latest', // emergency-only alias; log the resolved modelVersion
+]
 
-function modelRank(name) {
-  const m = name.match(/gemini-(\d+)(?:\.(\d+))?/)
-  const version = m ? Number(m[1]) * 100 + Number(m[2] || 0) : 0
-  const isPreview = /preview|exp(?:erimental)?\b/i.test(name)
-  const isLite = /lite/i.test(name)
-  // Newest generation first, a stable release over a preview one, and the
-  // full model just ahead of its own lite sibling (lite is tried right after
-  // it in the same chain either way, so this only breaks ties).
-  return version * 10 - (isPreview ? 5 : 0) - (isLite ? 1 : 0)
-}
-
-async function discoverGeminiModels() {
-  if (_discoveredModels) return _discoveredModels
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`
-    )
-    if (!res.ok) throw new Error(`ListModels ${res.status}`)
-    const data = await res.json()
-    const usable = (data.models || [])
-      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
-      .map(m => String(m.name).replace(/^models\//, ''))
-      .filter(n => !/embedding|image|imagen|tts|audio|aqa|vision|veo/i.test(n))
-    // Preview and experimental models are capacity-constrained and 503
-    // under load far more often than stable ones. Prefer the stable pool
-    // whenever it has anything in it; only fall back to previews when the
-    // key can reach nothing else.
-    const stable = usable.filter(n => !/preview|experimental|-exp/i.test(n))
-    const candidates = stable.length ? stable : usable
-    const flashOnly = candidates.filter(n => /flash/i.test(n))
-    const pool = (flashOnly.length ? flashOnly : candidates).sort(
-      (a, b) => modelRank(b) - modelRank(a)
-    )
-    if (pool.length) {
-      _discoveredModels = [...new Set(pool)].slice(0, 4)
-      console.log(`  Gemini models available to this key: ${_discoveredModels.join(', ')}`)
-      return _discoveredModels
-    }
-  } catch (err) {
-    console.warn(`  could not list Gemini models (${err.message}); using hardcoded fallback`)
-  }
-  _discoveredModels = FALLBACK_MODELS
-  return _discoveredModels
-}
-
-// An explicit GEMINI_MODEL always wins and skips discovery entirely.
+// An explicit GEMINI_MODEL always wins (single model, no chain).
+// Otherwise GEMINI_MODEL_CHAIN overrides the default chain; otherwise the
+// default chain above is used. Discovery via ListModels is deliberately
+// NOT consulted here: it lists models the project cannot call (2.5) and
+// says nothing about quota pools or overload.
 async function geminiModelsToTry() {
-  return process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : discoverGeminiModels()
+  if (process.env.GEMINI_MODEL) return [process.env.GEMINI_MODEL]
+  if (process.env.GEMINI_MODEL_CHAIN) {
+    const chain = process.env.GEMINI_MODEL_CHAIN.split(',').map(s => s.trim()).filter(Boolean)
+    if (chain.length) return chain
+  }
+  return DEFAULT_GEMINI_CHAIN
 }
 
 // Free-tier pacing. Gemini's free tier is limited per minute AND per day, and
