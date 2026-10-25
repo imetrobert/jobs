@@ -8,7 +8,7 @@ Built to sit alongside your invoicing and ETF apps on the **same Supabase projec
 — same login, tables namespaced `job_` so they can't collide.
 
 ```
-You click "Refresh now" (there is no schedule — scans are on demand)
+You click "Refresh now" — or the weekly schedule fires (Mondays 11:00 UTC)
     │
     ▼
 job-scan.yml runs
@@ -310,6 +310,13 @@ Add the employers you'd actually leave for. Paste either the slug or the full UR
 - Greenhouse → `boards.greenhouse.io/<slug>`
 - Lever → `jobs.lever.co/<slug>`
 - Ashby → `jobs.ashbyhq.com/<slug>`
+- SmartRecruiters → `jobs.smartrecruiters.com/<slug>`
+- Workable → `apply.workable.com/<slug>`
+- Workday → `<tenant>.wdN.myworkdayjobs.com/<site>`
+
+Pasting a full careers URL detects the board type for you. For Workday, run
+`supabase/migrations/20261025000000_add_workday_source_kind.sql` once in the
+Supabase SQL editor first, so the live database accepts the `'workday'` kind.
 
 Free, no key, no rate limit worth worrying about. Ten good companies here will
 outperform any aggregator.
@@ -715,7 +722,7 @@ jobs-app/
 │   ├── schema.sql                job_* tables, RLS, the job_ranked view
 │   └── functions/generate-application/   cover letter + CV edge function
 └── .github/workflows/
-    ├── job-scan.yml              on-demand dispatch (no schedule)
+    ├── job-scan.yml              weekly schedule (Mondays 11:00 UTC) + on-demand dispatch; writes docs/weekly-digest.md
     └── deploy.yml                build and publish to Pages
 ```
 

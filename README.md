@@ -46,5 +46,37 @@ on the last 12–15 years, earlier roles compressed, no graduation years.
 
 Deliberately does not scrape LinkedIn or Indeed: both block automated access and
 forbid it in their terms. Sources are documented APIs and the public ATS endpoints
-that Greenhouse, Lever and Ashby publish for embedding company job boards.
+that Greenhouse, Lever, Ashby, SmartRecruiters, Workable, and Workday publish for
+embedding company job boards.
 See SETUP.md for what that does and doesn't cost you in coverage.
+
+**Runs weekly, and tells you what it found.** The scan runs every Monday at
+11:00 UTC (`.github/workflows/job-scan.yml`), plus on demand from the Actions
+tab or the in-app Refresh button. After each run, a digest of the week's new
+roles at 35+ — the same bar the Jobs page shows — is written to
+`docs/weekly-digest.md` in this repo: title, company, score, location, link,
+and the scorer's fit line. The digest is plain formatting of rows already
+scored; it makes zero model calls.
+
+**Free tier, by construction.** Gemini usage here must never charge. The
+per-scan LLM budget is at most 24 requests (120 postings max, scored 5 per
+call), enforced by slicing the scoring queue before batching — adding more
+sources changes which postings get scored, never how many. Prefiltering,
+batched requests, the paced queue, and stopping early on quota are all
+unchanged.
+
+**Follow-ups on the Pipeline page.** Open any tracked role's card and set a
+follow-up date (and an optional note). Roles due today or overdue appear
+first on the Pipeline page in their own section, instead of inside their
+status group. Follow-ups are stored in the existing `job_applications.notes`
+column — no migration, no view change; see `src/lib/followUp.js` for the
+format.
+
+**Watch a company.** On the Sources tab, paste a company careers URL and the
+board type is detected from the hostname — Greenhouse, Lever, Ashby,
+SmartRecruiters, Workable, or Workday — and normalized to that board's
+public feed. A bare slug works too, with the board type picked from the
+dropdown. Workday boards need one thing first: the live database's source
+kind list must include `'workday'` — run
+`supabase/migrations/20261025000000_add_workday_source_kind.sql` once in
+the Supabase SQL editor (the repo's `schema.sql` already includes it).
