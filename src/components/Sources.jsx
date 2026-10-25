@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import Layout from './Layout'
+import { parseBoardUrl } from '../lib/boardUrl'
 
 // Company boards: `token` is the board slug, and every one of these is a
 // different company, so you add as many as you like.
@@ -10,6 +11,7 @@ const ATS_KINDS = [
   { v: 'ashby', l: 'Ashby', hint: 'jobs.ashbyhq.com/<slug>' },
   { v: 'smartrecruiters', l: 'SmartRecruiters', hint: 'jobs.smartrecruiters.com/<slug>' },
   { v: 'workable', l: 'Workable', hint: 'apply.workable.com/<slug>' },
+  { v: 'workday', l: 'Workday', hint: '<tenant>.wdN.myworkdayjobs.com/<site>' },
 ]
 
 // Market-wide feeds. These were seeded once at install and had no way back
@@ -55,20 +57,43 @@ export default function Sources() {
   async function add(e) {
     e.preventDefault()
     setMsg('')
-    // Accept a full board URL and pull the slug out of it.
-    const slug = needsToken ? token.trim().replace(/^.*\/([^/?#]+).*$/, '$1') : null
+    // Accept a full board URL and pull the board out of it — and let a
+    // pasted URL detect the board type from its hostname, so the kind
+    // dropdown is only a fallback for bare slugs. The old single-regex
+    // extraction took the LAST path segment whatever it was, which turned
+    // Greenhouse embed URLs into a board called "job_board" that does not
+    // exist; see src/lib/boardUrl.js.
+    let kindToAdd = kind
+    let slug = null
+    let detectedLabel = null
+    if (needsToken) {
+      const pasted = token.trim()
+      if (pasted.includes('/') || pasted.includes('.')) {
+        const parsed = parseBoardUrl(pasted, kind)
+        if (!parsed) {
+          setMsg('Could not recognise that board URL — check the hostname, or pick the board type above and paste just the slug.')
+          return
+        }
+        kindToAdd = parsed.kind
+        slug = parsed.slug
+        detectedLabel = parsed.label
+        if (kindToAdd !== kind) setKind(kindToAdd)
+      } else {
+        slug = pasted
+      }
+    }
 
     // (kind, token) is unique in the database, but Postgres treats two NULLs
     // as distinct — so nothing stops a second tokenless Jooble row. Catch it
     // here, where a duplicate feed just means scanning everything twice.
-    if (rows.some(r => r.kind === kind && (r.token || null) === slug)) {
-      setMsg(`That source is already in the list${slug ? ` (${kind}: ${slug})` : ''}.`)
+    if (rows.some(r => r.kind === kindToAdd && (r.token || null) === slug)) {
+      setMsg(`That source is already in the list${slug ? ` (${kindToAdd}: ${slug})` : ''}.`)
       return
     }
 
     const { error } = await supabase
       .from('job_sources')
-      .insert({ kind, label: label.trim() || KIND_LABEL[kind] || slug, token: slug })
+      .insert({ kind: kindToAdd, label: label.trim() || detectedLabel || KIND_LABEL[kindToAdd] || slug, token: slug })
     if (error) setMsg(error.message)
     else {
       setLabel('')
@@ -138,7 +163,7 @@ export default function Sources() {
             ? spec?.country
               ? 'One row per country — Adzuna runs a separate index for each.'
               : 'A single global feed; no slug needed. Its API key comes from the repo secrets.'
-            : 'Paste either the slug or the full board URL — the slug is extracted for you.'}
+            : 'Paste a company careers URL and the board type is detected for you — Greenhouse, Lever, Ashby, SmartRecruiters, Workable, or Workday. A bare slug works too, with the board type picked above.'}
         </p>
       </div>
 

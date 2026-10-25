@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { STATUSES, statusLabel, DISMISS_REASONS } from '../lib/statuses'
 import { dismissPosting } from '../lib/dismiss'
+import { parseFollowUp, formatFollowUp } from '../lib/followUp'
 
 function money(job) {
   if (!job.salary_min && !job.salary_max) return null
@@ -147,6 +148,11 @@ export default function JobCard({ job, onChanged }) {
   // visit) pushes the rest of the page out of view.
   const [docsOpen, setDocsOpen] = useState(false)
   const [err, setErr] = useState('')
+  // Follow-up date + note, stored in job_applications.notes (see
+  // src/lib/followUp.js for why no migration is needed). null = not loaded
+  // yet; loaded on first expand so collapsed cards cost no extra query.
+  const [followUp, setFollowUp] = useState(null)
+  const [followUpSaved, setFollowUpSaved] = useState(false)
   // Deliberately NOT the same flag as `busy`. Sharing one made clicking a
   // dismiss button flip the generate button's label to "Drafting…", which
   // reads exactly like the CV writer had just been started — on the click
@@ -204,10 +210,43 @@ export default function JobCard({ job, onChanged }) {
     if (data?.cover_letter) setDocs({ cover_letter: data.cover_letter, tailored_cv: data.tailored_cv })
   }
 
+  async function loadFollowUp() {
+    const { data } = await supabase
+      .from('job_applications')
+      .select('notes')
+      .eq('posting_id', job.id)
+      .maybeSingle()
+    setFollowUp(parseFollowUp(data?.notes))
+  }
+
+  async function saveFollowUp(next) {
+    setErr('')
+    setFollowUpSaved(false)
+    // Saving a follow-up implies the role is tracked: a row with no status
+    // yet lands in Pipeline as 'interested', which is where follow-ups
+    // surface. An existing status is never overwritten by this save.
+    const { error } = await supabase.from('job_applications').upsert(
+      {
+        posting_id: job.id,
+        status: job.app_status || 'interested',
+        notes: formatFollowUp(next.date, next.note),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'posting_id' }
+    )
+    if (error) setErr(error.message || 'Could not save follow-up')
+    else {
+      setFollowUp(next)
+      setFollowUpSaved(true)
+      onChanged?.()
+    }
+  }
+
   function toggle() {
     const next = !open
     setOpen(next)
     if (next && !docs && job.has_cover_letter) loadExisting()
+    if (next && followUp === null) loadFollowUp()
   }
 
   const pay = money(job)
@@ -386,6 +425,51 @@ export default function JobCard({ job, onChanged }) {
               role is still open.
             </p>
           )}
+
+          {/* Follow-up: a date (and optional note) on a tracked role.
+              Stored in job_applications.notes — see src/lib/followUp.js.
+              Roles due today or overdue sort first on the Pipeline page. */}
+          <section className="followup">
+            <h4>Follow-up</h4>
+            {followUp === null ? (
+              <p className="muted sm">Loading…</p>
+            ) : (
+              <>
+                <div className="row wrap">
+                  <label className="sm">
+                    Date
+                    <input
+                      type="date"
+                      value={followUp.date}
+                      onChange={e => { setFollowUp({ ...followUp, date: e.target.value }); setFollowUpSaved(false) }}
+                    />
+                  </label>
+                  <input
+                    value={followUp.note}
+                    placeholder="Note (optional)"
+                    onChange={e => { setFollowUp({ ...followUp, note: e.target.value }); setFollowUpSaved(false) }}
+                  />
+                </div>
+                <div className="row wrap">
+                  <button className="btn sm" onClick={() => saveFollowUp(followUp)}>
+                    Save follow-up
+                  </button>
+                  {(followUp.date || followUp.note) && (
+                    <button
+                      className="btn ghost sm"
+                      onClick={() => saveFollowUp({ date: '', note: '' })}
+                    >
+                      Clear
+                    </button>
+                  )}
+                  {followUpSaved && <span className="muted sm">Saved.</span>}
+                </div>
+                <p className="muted sm">
+                  Due follow-ups appear first on the Pipeline page, ahead of the status groups.
+                </p>
+              </>
+            )}
+          </section>
 
           {/* The two ways a role stops being worth looking at, one click each
               and sitting right under the link — because that is where you
