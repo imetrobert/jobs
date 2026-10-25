@@ -1,9 +1,20 @@
-// Monthly (or on-demand) job scan.
+// Weekly (or on-demand) job scan.
 //
 // Fetch → normalize → dedupe → prefilter → score → persist.
 //
 // Sized to run inside Gemini's free tier: postings are prefiltered before any
 // LLM call, then scored in batches through a rate-limited queue.
+//
+// FREE-TIER BUDGET, STATED PLAINLY: the per-scan LLM request budget is
+// MAX_SCORES_PER_RUN / SCORE_BATCH_SIZE — 120 postings / 5 per call = at
+// most 24 LLM requests per scan, and usually far fewer (prefiltering drops
+// most rows before scoring, and the queue stops early when the daily quota
+// runs out). That budget is structural, not aspirational: the toScore list
+// is sliced to MAX_SCORES_PER_RUN BEFORE batching, so adding more sources —
+// Workday boards included — can only change WHICH postings get scored, never
+// how many. No code path in this scan may make an LLM call outside that
+// slice, and no new source may bypass the prefilter. Gemini usage here must
+// never charge: free tier only, no paid model, no billing-enabled key.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (required)
 //      GEMINI_API_KEY                          (required — the scorer)
@@ -75,6 +86,7 @@ const URL_RANK = {
   ashby: 5,
   smartrecruiters: 5,
   workable: 5,
+  workday: 5,
   // Curated, small, and prunes closed roles reasonably promptly.
   remotive: 3,
   // Big aggregators: links usually resolve, but to their own listing page,
