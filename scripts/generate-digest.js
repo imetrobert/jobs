@@ -29,7 +29,8 @@
 // fetching and scoring already succeeded. A stale digest file is better
 // than a failed run; the next weekly run overwrites it.
 
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
@@ -105,7 +106,8 @@ async function main() {
   lines.push('Generated from the weekly scan. Scores and fit notes are the scan\'s own; nothing here was re-judged.')
   lines.push('')
 
-  writeFileSync(OUT_PATH, lines.join('\n'))
+mkdirSync(dirname(OUT_PATH), { recursive: true })
+writeFileSync(OUT_PATH, lines.join('\n'))
   console.log(`Digest: ${rows.length} role(s) → ${OUT_PATH}`)
 }
 
