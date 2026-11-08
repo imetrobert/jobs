@@ -107,8 +107,8 @@ async function main() {
   lines.push('')
 
   mkdirSync(dirname(OUT_PATH), { recursive: true })
-writeFileSync(OUT_PATH, lines.join('\n'))
-    console.log(`Digest: ${rows.length} role(s) → ${OUT_PATH}`)
+  writeFileSync(OUT_PATH, lines.join('\n'))
+console.log(`Digest: ${rows.length} role(s) → ${OUT_PATH}`)
 }
 
 main().catch(err => {
