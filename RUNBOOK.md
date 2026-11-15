@@ -7,6 +7,15 @@
 4. No run at all for weeks: GitHub pauses schedules after 60 days without repo activity.
    Open Actions → Job scan → **Enable workflow**, then Run workflow.
 
+## A company board shows a red error on the Sources tab
+The error is stored from the LAST scan, so after a fix it stays red until the next scan (tap Refresh, or wait for Monday).
+- "Invalid time value" on a Workday board: fixed 2026-11-14 (PR #23, `workdayPostedAt()` in `scripts/sources.js`); red text from before that clears on the next scan.
+- 404 / "not found": the token is wrong. Tokens: ashby `lightspeedhq`, workable `mila-2`, greenhouse `coveoen`, smartrecruiters `Videotron` / `TransatAT1`; workday `<host>/<site>` such as `sunlife.wd3.myworkdayjobs.com/Experienced-Jobs`
+  (open the employer's careers page in a browser, copy the address, and paste it on the Sources tab: it detects the type and token).
+- Fix a wrong token: Remove the source on the Sources tab and re-add it by pasting the careers URL.
+- Seed list of Montreal boards: `supabase/migrations/20261115000000_seed_company_boards.sql` (already run). Employers on their own careers systems
+  (Telus, Rogers, banks, iA, IATA, UN agencies) cannot be read by the app; use their email alerts instead.
+
 ## Site did not update after an edit
 Actions → **Deploy to GitHub Pages**. Re-run if red. Needs `VITE_SUPABASE_URL` and
 `VITE_SUPABASE_ANON_KEY` secrets.
