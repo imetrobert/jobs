@@ -1,0 +1,19 @@
+# Monthly, grouped dependency updates. Each one arrives as ONE pull request; the "Build check" workflow
+# says whether it still builds. Green = merge it (Merge pull request). Red = leave it and ask Claude to look.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        patterns: ["*"]
