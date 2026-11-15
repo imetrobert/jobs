@@ -72,7 +72,7 @@ async function main() {
   const since = new Date(Date.now() - WINDOW_DAYS * 86400_000).toISOString()
   const { data: matches, error: matchErr } = await db
     .from('job_matches')
-    .select('posting_id, score, tier, why_fit, scored_at')
+    .select('posting_id, score, tier, why_fit, scored_at, location_fit')
     .gte('score', SCORE_BAR)
     .gte('scored_at', since)
     .order('score', { ascending: false })
@@ -93,6 +93,13 @@ async function main() {
       // stale roles are hidden in the app — neither belongs in a digest.
       .filter(r => r.posting && !r.posting.stale)
   }
+
+  // Same default as the Jobs page: roles outside Montreal, or remote with no
+  // clear Montreal eligibility, stay out (the page reveals them behind a
+  // checkbox). Counted here so the digest says what it left out.
+  const HIDDEN_FIT = new Set(['not_montreal', 'remote_unclear'])
+  const hiddenCount = rows.filter(r => HIDDEN_FIT.has(r.location_fit)).length
+  rows = rows.filter(r => !HIDDEN_FIT.has(r.location_fit))
 
   const today = new Date().toISOString().slice(0, 10)
   const lines = []
@@ -115,6 +122,10 @@ async function main() {
       if (r.why_fit) lines.push(`Why it fits: ${oneLine(r.why_fit)}`)
       lines.push('')
     }
+  }
+  if (hiddenCount) {
+    lines.push(`${hiddenCount} more role${hiddenCount === 1 ? '' : 's'} scored above the bar but are outside Montreal or unclear about remote eligibility; the Jobs page shows them behind its checkbox.`)
+    lines.push('')
   }
   lines.push('---')
   lines.push('Generated from the weekly scan. Scores and fit notes are the scan\'s own; nothing here was re-judged.')
