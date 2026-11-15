@@ -213,6 +213,14 @@ export default function Jobs({ session }) {
             <code>Actions: read and write</code> on this repo. Note that <code>workflow</code>{' '}
             is <em>not</em> the right scope: it governs editing workflow files, not running them.)
           </p>
+          <p className="muted">
+            Token expired or rejected? Make a new one:{' '}
+            <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">new fine-grained token</a>
+            {' '}(this repo only, <code>Actions: read and write</code>). Then delete the old one:{' '}
+            <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">fine-grained list</a>
+            {' '}or{' '}
+            <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer">classic list</a>.
+          </p>
           <div className="row">
             <input
               type="password"
