@@ -501,6 +501,25 @@ export async function fetchWorkable({ token, label }) {
 //     searchText-filtered pull is not the whole board, so absence from it
 //     says nothing about whether a role is still open.
 // ---------------------------------------------------------------------
+// Workday's postedOn is relative text ("Posted Today", "Posted 3 Days Ago",
+// "Posted 30+ Days Ago"), not a date. new Date() on it throws "Invalid time
+// value", which failed every Workday board. Convert what we can; null otherwise.
+export function workdayPostedAt(text, now = new Date()) {
+  const t = String(text || '').toLowerCase()
+  let days = null
+  if (/today/.test(t)) days = 0
+  else if (/yesterday/.test(t)) days = 1
+  else {
+    const m = t.match(/(\d+)\+?\s*day/)
+    if (m) days = Number(m[1])
+  }
+  if (days === null) {
+    const d = new Date(text)
+    return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  return new Date(now.getTime() - days * 86400000).toISOString()
+}
+
 export async function fetchWorkday({ token, label, queries }) {
   const parts = String(token || '').split('/').filter(Boolean)
   const host = parts[0]
@@ -552,7 +571,7 @@ export async function fetchWorkday({ token, label, queries }) {
           salary_min: null,
           salary_max: null,
           salary_currency: null,
-          posted_at: j.postedOn ? new Date(j.postedOn).toISOString() : null,
+          posted_at: workdayPostedAt(j.postedOn),
         })
       }
       const total = data?.total ?? 0
