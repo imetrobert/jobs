@@ -36,6 +36,20 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error('Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY')
   process.exit(1)
 }
+
+// Fail early, with the fix spelled out, if Supabase refuses the key.
+{
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/`, { headers: { apikey: SUPABASE_SERVICE_ROLE_KEY } }).catch(() => null)
+  if (r && (r.status === 401 || r.status === 403)) {
+    console.error(
+      '::error::Supabase rejected the secret key saved as SUPABASE_SERVICE_ROLE_KEY (it expired, was rotated or was deleted). To fix: ' +
+        '1) Open https://supabase.com/dashboard/project/ipnajvgwtjrlecbqfwrh/settings/api-keys and create a new secret key (or copy the one made for this app). ' +
+        '2) Open https://github.com/imetrobert/jobs/settings/secrets/actions, tap SUPABASE_SERVICE_ROLE_KEY, paste the new key, Update secret. ' +
+        '3) Re-run the failed workflow from the Actions tab. 4) Delete the old key on the Supabase page.'
+    )
+    process.exit(1)
+  }
+}
 if (!activeProvider()) {
   console.error('Missing GEMINI_API_KEY (or the optional ANTHROPIC_API_KEY) — nothing could be scored')
   process.exit(1)
