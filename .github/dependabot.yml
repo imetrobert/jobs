@@ -10,6 +10,11 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+    # Major upgrades (React 19, router 7, ...) need real testing, so they do not arrive on their own.
+    # To take one deliberately, remove this block or ask Claude to upgrade that one package.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
