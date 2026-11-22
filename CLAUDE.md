@@ -30,6 +30,7 @@ Why not LinkedIn/Indeed · 1 tables · 2 feed keys · 3 Gemini scorer · 5 repo 
 Reading the results · Running costs · **When something goes wrong** (line ~640) · Layout
 
 ## Cheap-change guide
+- Step-by-step recipes for the usual edits: `docs/common-edits.md` (open it first).
 - Copy/text change: edit the one component, commit to main, Pages redeploys (~1 min).
 - Add a company board: Sources page in the app, no code change.
 - Scan problem: Actions → Job scan → latest run log; then RUNBOOK.md.
