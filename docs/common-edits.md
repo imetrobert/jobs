@@ -20,8 +20,9 @@ tiers `remote_montreal`, `onsite_close`, `onsite_far`, `remote_unclear`, `not_mo
 
 ## 4. Change the AI model (scan errors like 404, "model not found", quota 0)
 `scripts/llm.js`: the list `DEFAULT_GEMINI_CHAIN`. Gemini names are retired often and a pinned
-name can silently route elsewhere (see the comment in that file). To change without a code edit,
-set the repo variable or workflow env `GEMINI_MODEL_CHAIN` (comma list) or `GEMINI_MODEL` (one model).
+name can silently route elsewhere (see the comment in that file). Without touching the code, add a line
+`GEMINI_MODEL_CHAIN: gemini-3.5-flash-lite,gemini-3.1-flash-lite` (comma list) or `GEMINI_MODEL: <one model>`
+to the `env:` block of the scan step in `.github/workflows/job-scan.yml` (the workflow does not set them today).
 Key: secret `GEMINI_API_KEY`.
 
 ## 5. Change how many jobs are scored per scan (free-tier budget)
