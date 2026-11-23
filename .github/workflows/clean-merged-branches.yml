@@ -1,8 +1,9 @@
 name: Clean merged branches
 
 # Manual only: Actions, Clean merged branches, Run workflow.
-# Deletes a branch ONLY when (1) a pull request from it was merged, (2) the branch still points at the
-# exact commit that was merged (nothing newer on it), and (3) no pull request from it is still open.
+# Deletes a branch ONLY when no pull request from it is still open AND either (a) a pull request from it was merged
+# and the branch still points at that exact commit, or (b) it has no commits of its own (all already in the default
+# branch) and the default branch has moved on.
 # Never touches the default branch, gh-pages, or protected branches. Set DRY_RUN to "true" to only list.
 on:
   workflow_dispatch:
@@ -41,7 +42,16 @@ jobs:
                 gh api -X DELETE "repos/$REPO/git/refs/heads/$name" >/dev/null && echo "deleted: $name"; fi
               del=$((del+1))
             else
-              echo "keep (no merged PR, or newer commits): $name"; keep=$((keep+1))
+              # No merged PR: still safe when the branch has no commits of its own (everything is already in the
+              # default branch) AND the default branch has moved on (so a brand-new empty branch is never touched).
+              ab=$(gh api "repos/$REPO/compare/$default...$name" --jq '"\(.ahead_by) \(.behind_by)"' 2>/dev/null || echo "x x")
+              if [ "${ab% *}" = "0" ] && [ "${ab#* }" != "0" ] && [ "${ab#* }" != "x" ]; then
+                if [ "$DRY" = "true" ]; then echo "would delete (already in $default): $name"; else
+                  gh api -X DELETE "repos/$REPO/git/refs/heads/$name" >/dev/null && echo "deleted (already in $default): $name"; fi
+                del=$((del+1))
+              else
+                echo "keep (has its own commits, or no merged PR): $name"; keep=$((keep+1))
+              fi
             fi
           done < branches.txt
           echo "Done. Deleted/would delete: $del. Kept: $keep."
