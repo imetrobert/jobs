@@ -34,3 +34,5 @@ Reading the results · Running costs · **When something goes wrong** (line ~640
 - Copy/text change: edit the one component, commit to main, Pages redeploys (~1 min).
 - Add a company board: Sources page in the app, no code change.
 - Scan problem: Actions → Job scan → latest run log; then RUNBOOK.md.
+
+If something breaks (red check, failed run, no access): `docs/if-something-breaks.md` (open it first).
