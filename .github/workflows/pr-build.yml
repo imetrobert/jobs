@@ -1,0 +1,26 @@
+name: PR build check
+
+# Runs on pull requests only: proves the app still installs and builds before you merge
+# (for example a Dependabot bump). Nothing here deploys. Uses placeholder public settings.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build
+        env:
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder
+        run: npm run build
